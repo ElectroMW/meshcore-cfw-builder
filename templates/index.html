@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeshCore Custom Firmware Builder</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3348;
+      --accent: #4f8ef7;
+      --accent-dark: #3a72d8;
+      --success: #34d399;
+      --error: #f87171;
+      --warn: #fbbf24;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header svg { flex-shrink: 0; }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header p  { font-size: 0.8rem; color: var(--text-muted); }
+    .github-link {
+      margin-left: auto;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .github-link:hover { color: var(--accent); }
+
+    /* ── Layout ── */
+    .main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 800px) {
+      .main { grid-template-columns: 1fr; padding: 1rem; }
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .card-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      margin-bottom: 1.2rem;
+    }
+
+    /* ── Form elements ── */
+    .field { margin-bottom: 1rem; }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+    select, input[type="text"], input[type="number"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      padding: 0.55rem 0.75rem;
+      font-size: 0.9rem;
+      transition: border-color 0.15s;
+      outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); }
+    select { cursor: pointer; }
+
+    /* env selector grid */
+    .env-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      margin-bottom: 1.2rem;
+    }
+    .env-btn {
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-muted);
+      padding: 0.65rem 0.5rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: center;
+    }
+    .env-btn:hover { border-color: var(--accent); color: var(--text); }
+    .env-btn.selected {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+      color: var(--accent);
+    }
+
+    /* flag groups */
+    .flag-group { margin-bottom: 1.2rem; }
+    .flag-group-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 0.6rem;
+      padding-bottom: 0.3rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .flag-row {
+      display: grid;
+      grid-template-columns: 1fr 120px;
+      gap: 0.5rem;
+      align-items: end;
+      margin-bottom: 0.5rem;
+    }
+    .flag-row label { margin-bottom: 0.25rem; }
+    .reset-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      padding: 0.55rem 0.5rem;
+      cursor: pointer;
+      height: 100%;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .reset-btn:hover { border-color: var(--warn); color: var(--warn); }
+
+    /* ── Build button ── */
+    .build-btn {
+      width: 100%;
+      background: var(--accent);
+      border: none;
+      border-radius: 9px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      padding: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      margin-top: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .build-btn:hover:not(:disabled) { background: var(--accent-dark); }
+    .build-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Log panel ── */
+    .log-panel { position: sticky; top: 1rem; }
+    .log-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .status-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .status-idle    { background: var(--surface2); color: var(--text-muted); }
+    .status-queued  { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+    .status-running { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+    .status-done    { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); }
+    .status-error   { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); }
+
+    .log-box {
+      background: #0a0b10;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      line-height: 1.6;
+      height: 480px;
+      overflow-y: auto;
+      padding: 1rem;
+      color: #a8b4c8;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-box .log-success { color: var(--success); }
+    .log-box .log-error   { color: var(--error); }
+    .log-box .log-warn    { color: var(--warn); }
+    .log-box .log-info    { color: var(--accent); }
+
+    .download-btn {
+      display: none;
+      width: 100%;
+      margin-top: 1rem;
+      background: var(--success);
+      border: none;
+      border-radius: 9px;
+      color: #0a2a1a;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.85rem;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .download-btn.visible { display: flex; }
+    .download-btn:hover { opacity: 0.85; }
+
+    .flash-container {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .flash-container.visible { display: block; }
+
+    /* ── Inline flash button & progress ── */
+    .flash-btn {
+      display: flex;
+      width: 100%;
+      background: var(--success);
+      border: none;
+      border-radius: 9px;
+      color: #0a2a1a;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.85rem;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .flash-btn:hover:not(:disabled) { opacity: 0.85; }
+    .flash-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .flash-progress {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .flash-progress.visible { display: block; }
+    .flash-progress-track {
+      background: var(--surface2);
+      border-radius: 6px;
+      height: 7px;
+      overflow: hidden;
+      margin-bottom: 0.45rem;
+    }
+    .flash-progress-fill {
+      height: 100%;
+      background: var(--success);
+      border-radius: 6px;
+      width: 0%;
+      transition: width 0.25s ease;
+    }
+    .flash-status-text {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .flash-note {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 0.4rem;
+    }
+
+    /* ── Debug panel ── */
+    .debug-panel {
+      display: none;
+      margin-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.75rem;
+    }
+    .debug-panel.visible { display: block; }
+    .debug-tabs {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .debug-tab {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      font-family: var(--mono);
+      padding: 0.25rem 0.55rem;
+      cursor: pointer;
+      transition: all 0.12s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 220px;
+    }
+    .debug-tab:hover { border-color: var(--accent); color: var(--text); }
+    .debug-tab.active {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+      color: var(--accent);
+    }
+    .debug-code {
+      background: #0a0b10;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.55;
+      height: 360px;
+      overflow: auto;
+      padding: 0.9rem 1rem;
+      color: #a8b4c8;
+      white-space: pre;
+      word-break: normal;
+      counter-reset: line;
+    }
+    .debug-code .ini-comment  { color: #556070; }
+    .ini-section  { color: #c792ea; font-weight: 600; }
+    .ini-key      { color: #7ec8e3; }
+    .ini-value    { color: #c3e88d; }
+    .ini-flag     { color: #ffcb6b; }
+
+    /* ── Serial console ── */
+    .console-panel {
+      display: none;
+    }
+    .console-panel.visible { display: block; }
+
+    .console-box {
+      background: #0a0b10;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      line-height: 1.6;
+      height: 320px;
+      overflow-y: auto;
+      padding: 1rem;
+      color: #a8b4c8;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .console-box .rx  { color: #a8b4c8; }
+    .console-box .sys { color: var(--accent); font-style: italic; }
+    .console-box .err { color: var(--error); }
+
+    /* spinner */
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2.5px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .spinner.active { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .placeholder-text {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <!-- MeshCore logo approx -->
+  <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+    <circle cx="18" cy="18" r="17" stroke="#4f8ef7" stroke-width="2"/>
+    <circle cx="9"  cy="18" r="3" fill="#4f8ef7"/>
+    <circle cx="18" cy="9"  r="3" fill="#4f8ef7"/>
+    <circle cx="27" cy="18" r="3" fill="#4f8ef7"/>
+    <circle cx="18" cy="27" r="3" fill="#4f8ef7"/>
+    <line x1="9" y1="18" x2="18" y2="9"  stroke="#4f8ef7" stroke-width="1.5"/>
+    <line x1="18" y1="9"  x2="27" y2="18" stroke="#4f8ef7" stroke-width="1.5"/>
+    <line x1="27" y1="18" x2="18" y2="27" stroke="#4f8ef7" stroke-width="1.5"/>
+    <line x1="18" y1="27" x2="9"  y2="18" stroke="#4f8ef7" stroke-width="1.5"/>
+  </svg>
+  <div>
+    <h1>MeshCore Custom Firmware Builder</h1>
+    <p>Select your hardware, choose a firmware type, customise settings, then build &amp; flash</p>
+  </div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:0;">
+  <a class="github-link" href="/privacy" style="margin-right:0.75rem;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    Privacy
+  </a>
+  <a class="github-link" href="/credits" style="margin-right:0.75rem;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+    Credits
+  </a>
+  <a class="github-link" href="https://github.com/meshcore-dev/MeshCore" target="_blank">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577
+               0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07
+               3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838
+               1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605
+               -2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303
+               -.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405
+               1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24
+               2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475
+               5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57
+               C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
+    </svg>
+    meshcore-dev/MeshCore
+  </a>
+  </div>
+</header>
+
+<div class="main">
+  <!-- ── Left column: config ── -->
+  <div>
+    <div class="card">
+      <div class="card-title">1 · Select Hardware</div>
+      <div class="field" id="variantField">
+        <label>Hardware variant</label>
+        <select id="variantSelect" onchange="onVariantChange(this.value)">
+          <option value="">Loading variants…</option>
+        </select>
+      </div>
+
+      <div class="card-title" id="fwTypeTitle" style="display:none">2 · Select Firmware Type</div>
+      <div class="env-grid" id="envGrid" style="display:none"></div>
+
+      <div class="card-title" id="flagsTitle" style="display:none">3 · Customise Build Flags</div>
+      <div id="flagsContainer"></div>
+
+      <button class="build-btn" id="buildBtn" onclick="startBuild()">
+        <span class="spinner" id="buildSpinner"></span>
+        <span id="buildBtnText">⚡ Build Firmware</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Right column: log ── -->
+  <div class="log-panel">
+    <div class="card">
+        <div class="log-header">
+          <div class="card-title" style="margin-bottom:0">Build Log</div>
+          <span class="status-badge status-idle" id="statusBadge">Idle</span>
+          <div style="margin-left:auto;display:flex;gap:0.4rem;align-items:center">
+            <button id="debugToggleBtn"
+                    style="background:none;border:1px solid var(--border);color:var(--text-muted);
+                           border-radius:6px;font-size:0.72rem;padding:0.2rem 0.6rem;cursor:pointer"
+                    onclick="toggleDebug()" disabled title="Available after flags are applied">
+              &#128269; Debug
+            </button>
+            <button style="background:none;border:1px solid var(--border);
+                           color:var(--text-muted);border-radius:6px;font-size:0.72rem;
+                           padding:0.2rem 0.6rem;cursor:pointer"
+                    onclick="clearLog()">Clear</button>
+          </div>
+        </div>
+      <div class="log-box" id="logBox">
+        <div class="placeholder-text">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V9l-6-6z"/>
+            <polyline points="9 3 9 9 15 9"/>
+          </svg>
+          <span>Configure your firmware and click Build</span>
+        </div>
+      </div>
+      <button class="download-btn" id="downloadBtn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download firmware-merged.bin
+      </button>
+
+      <div class="flash-container" id="flashContainer">
+        <button class="flash-btn" id="flashBtn" onclick="startFlash()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+          </svg>
+          <span id="flashBtnText">Flash Device via USB</span>
+        </button>
+        <div class="flash-progress" id="flashProgress">
+          <div class="flash-progress-track"><div class="flash-progress-fill" id="flashProgressFill"></div></div>
+          <div class="flash-status-text" id="flashStatusText"></div>
+        </div>
+        <div class="flash-note">Requires Chrome or Edge &nbsp;·&nbsp; Connect ESP32 via USB before clicking</div>
+      </div>
+
+      <!-- Serial console: shown after flash button is clicked -->
+      <div class="console-panel" id="consolePanel">
+        <div style="border-top:1px solid var(--border);margin:1rem 0 0.75rem"></div>
+        <div class="console-box" id="consoleBox"></div>
+      </div>
+
+      <!-- Debug panel: shown when debug toggle is clicked -->
+      <div class="debug-panel" id="debugPanel">
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+          <span style="font-size:0.72rem;font-weight:700;text-transform:uppercase;
+                       letter-spacing:0.08em;color:var(--warn)">&#128269; Debug – INI Files</span>
+          <button onclick="refreshDebug()"
+                  style="background:none;border:1px solid var(--border);color:var(--text-muted);
+                         border-radius:5px;font-size:0.7rem;padding:0.15rem 0.45rem;cursor:pointer"
+                  title="Refresh">&#8635;</button>
+        </div>
+        <div class="debug-tabs" id="debugTabs"></div>
+        <div class="debug-code" id="debugCode"><span style="color:var(--text-muted)">Waiting for build flags to be applied…</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  const FLAGS      = {{ flags | tojson }};
+  let allVariants  = [];   // [{id, label, envs:[{id,label,type}]}]
+  let currentEnv   = null; // selected env_id
+  let currentEnvType = ''; // type_key of selected env
+  let currentJobId = null;
+  let building     = false;
+
+  // ── Variant / env loading ────────────────────────────────────────────────────
+  async function loadVariants() {
+    const sel = document.getElementById('variantSelect');
+    try {
+      // Poll until variants are ready (backend discovers them at startup)
+      let data;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const res = await fetch('/api/variants');
+        data = await res.json();
+        if (data.status === 'ready') break;
+        await new Promise(r => setTimeout(r, 2000));
+        if (attempt === 0) sel.options[0].textContent = 'Discovering variants…';
+      }
+      allVariants = data.variants || [];
+      sel.innerHTML = '<option value="">-- Select hardware --</option>';
+      allVariants.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.label;
+        sel.appendChild(opt);
+      });
+      if (allVariants.length === 0) {
+        sel.innerHTML = '<option value="">No variants found</option>';
+      }
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load variants</option>';
+    }
+  }
+
+  function onVariantChange(variantId) {
+    const envGrid   = document.getElementById('envGrid');
+    const fwTitle   = document.getElementById('fwTypeTitle');
+    const flagsTitle = document.getElementById('flagsTitle');
+    const flagsCont = document.getElementById('flagsContainer');
+    const buildBtn  = document.getElementById('buildBtn');
+
+    currentEnv     = null;
+    currentEnvType = '';
+    envGrid.innerHTML = '';
+    flagsCont.innerHTML = '';
+    envGrid.style.display = 'none';
+    fwTitle.style.display = 'none';
+    flagsTitle.style.display = 'none';
+    buildBtn.disabled = true;
+
+    if (!variantId) return;
+
+    const variant = allVariants.find(v => v.id === variantId);
+    if (!variant || !variant.envs.length) return;
+
+    // Populate firmware-type buttons
+    envGrid.innerHTML = '';
+    variant.envs.forEach((e, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'env-btn' + (i === 0 ? ' selected' : '');
+      btn.dataset.env  = e.id;
+      btn.dataset.type = e.type;
+      btn.textContent  = e.label;
+      btn.onclick = () => selectEnv(btn);
+      envGrid.appendChild(btn);
+    });
+
+    envGrid.style.display   = 'grid';
+    fwTitle.style.display   = 'block';
+
+    // Auto-select first env
+    const firstBtn = envGrid.querySelector('.env-btn');
+    if (firstBtn) selectEnv(firstBtn);
+  }
+
+  // ── Env selection ─────────────────────────────────────────────────────────────
+  function selectEnv(btn) {
+    document.querySelectorAll('.env-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    currentEnv     = btn.dataset.env;
+    currentEnvType = btn.dataset.type || '';
+    renderFlags();
+    document.getElementById('flagsTitle').style.display = 'block';
+    updateBuildReady();
+  }
+
+  // ── Flag rendering ────────────────────────────────────────────────────────────
+  function flagApplies(flag) {
+    const et = flag.env_types;
+    return et === 'all' || (Array.isArray(et) && et.includes(currentEnvType));
+  }
+
+  function renderFlags() {
+    const container  = document.getElementById('flagsContainer');
+    const flagsTitle = document.getElementById('flagsTitle');
+    const groups = {};
+    FLAGS.filter(flagApplies).forEach(f => {
+      if (!groups[f.group]) groups[f.group] = [];
+      groups[f.group].push(f);
+    });
+
+    container.innerHTML = '';
+    const hasFlags = Object.keys(groups).length > 0;
+    if (flagsTitle) flagsTitle.style.display = hasFlags ? 'block' : 'none';
+    for (const [groupName, flags] of Object.entries(groups)) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'flag-group';
+      groupEl.innerHTML = `<div class="flag-group-title">${groupName}</div>`;
+      flags.forEach(flag => {
+        const storageKey = `flag_${flag.key}`;
+        const stored = localStorage.getItem(storageKey);
+        const value  = stored !== null ? stored : flag.default;
+        const row = document.createElement('div');
+        row.className = 'flag-row';
+
+        const isDigits6 = flag.validate === 'digits6';
+        const inputAttrs = isDigits6
+          ? `inputmode="numeric" maxlength="6" pattern="[0-9]{6}"
+             style="letter-spacing:0.15em;font-family:var(--mono)"
+             oninput="filterDigits6(this,'${flag.key}')"  `
+          : `oninput="saveFlag('${flag.key}', this.value)" `;
+
+        row.innerHTML = `
+          <div class="field">
+            <label>${flag.label}${isDigits6 ? ' <span id="ble_pin_hint" style="font-size:0.7rem"></span>' : ''}</label>
+            <input type="text" id="flag_${flag.key}" value="${escHtml(value)}"
+                   ${inputAttrs}/>
+          </div>
+          <button class="reset-btn" onclick="resetFlag('${flag.key}', '${escHtml(flag.default)}')">
+            Reset
+          </button>`;
+        groupEl.appendChild(row);
+
+        // Run initial validation hint after DOM is updated
+        if (isDigits6) {
+          requestAnimationFrame(() => {
+            const el = document.getElementById(`flag_${flag.key}`);
+            if (el) updateBleHint(el.value);
+          });
+        }
+      });
+      container.appendChild(groupEl);
+    }
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function saveFlag(key, value) {
+    localStorage.setItem(`flag_${key}`, value);
+  }
+
+  function filterDigits6(el, key) {
+    // Strip non-digits and cap at 6
+    const clean = el.value.replace(/\D/g, '').slice(0, 6);
+    el.value = clean;
+    saveFlag(key, clean);
+    updateBleHint(clean);
+    updateBuildReady();
+  }
+
+  function updateBleHint(val) {
+    const hint = document.getElementById('ble_pin_hint');
+    if (!hint) return;
+    const len = val.length;
+    if (len === 6) {
+      hint.textContent = '\u2713 6 digits';
+      hint.style.color = 'var(--success)';
+    } else {
+      hint.textContent = `${len}/6 digits required`;
+      hint.style.color = len > 0 ? 'var(--warn)' : 'var(--error)';
+    }
+  }
+
+  function resetFlag(key, defaultVal) {
+    const el = document.getElementById(`flag_${key}`);
+    if (el) { el.value = defaultVal; saveFlag(key, defaultVal); }
+  }
+
+  // ── Validation ────────────────────────────────────────────────────────────────
+  function validateFlags() {
+    // Check all flags with validate==='digits6'
+    return FLAGS.filter(flagApplies).every(f => {
+      if (f.validate !== 'digits6') return true;
+      const el = document.getElementById(`flag_${f.key}`);
+      return el && /^\d{6}$/.test(el.value);
+    });
+  }
+
+  function updateBuildReady() {
+    const ok = currentEnv && !building && validateFlags();
+    document.getElementById('buildBtn').disabled = !ok;
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
+  function collectFlags() {
+    const out = {};
+    FLAGS.filter(flagApplies).forEach(f => {
+      const el = document.getElementById(`flag_${f.key}`);
+      if (el) out[f.key] = el.value;
+    });
+    return out;
+  }
+
+  function setBuilding(on) {
+    building = on;
+    document.getElementById('buildBtn').disabled = on || !currentEnv;
+    const spinner = document.getElementById('buildSpinner');
+    const txt     = document.getElementById('buildBtnText');
+    spinner.classList.toggle('active', on);
+    txt.textContent = on ? 'Building…' : '⚡ Build Firmware';
+  }
+
+  function setStatus(status, label) {
+    const badge = document.getElementById('statusBadge');
+    badge.className = `status-badge status-${status}`;
+    badge.textContent = label || (status.charAt(0).toUpperCase() + status.slice(1));
+  }
+
+  function appendLog(text, cls) {
+    const box = document.getElementById('logBox');
+    // Remove placeholder if present
+    const ph = box.querySelector('.placeholder-text');
+    if (ph) ph.remove();
+
+    const span = document.createElement('span');
+    if (cls) span.className = cls;
+    span.textContent = text + '\n';
+    box.appendChild(span);
+    box.scrollTop = box.scrollHeight;
+
+    // Enable debug button once flags have been applied
+    if (/flags applied/i.test(text)) {
+      const btn = document.getElementById('debugToggleBtn');
+      btn.disabled = false;
+      if (debugOpen) refreshDebug();
+    }
+  }
+
+  function clearLog() {
+    const box = document.getElementById('logBox');
+    box.innerHTML = `<div class="placeholder-text">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V9l-6-6z"/>
+        <polyline points="9 3 9 9 15 9"/>
+      </svg>
+      <span>Configure your firmware and click Build</span>
+    </div>`;
+  }
+
+  function logClass(line) {
+    if (/error|failed|✗/i.test(line))  return 'log-error';
+    if (/warning/i.test(line))          return 'log-warn';
+    if (/queued|waiting/i.test(line))   return 'log-warn';
+    if (/\[builder\]|success|✓/i.test(line)) return 'log-info';
+    return null;
+  }
+
+  async function startBuild() {
+    if (building) return;
+    if (!currentEnv) return;
+    if (!validateFlags()) return;
+    setBuilding(true);
+    setStatus('running');
+    document.getElementById('downloadBtn').classList.remove('visible');
+    document.getElementById('flashContainer').classList.remove('visible');
+    document.getElementById('consolePanel').classList.remove('visible');
+    // Reset debug panel
+    debugFiles  = {};
+    debugActive = null;
+    document.getElementById('debugToggleBtn').disabled = true;
+    document.getElementById('debugTabs').innerHTML     = '';
+    document.getElementById('debugCode').innerHTML     = '<span style="color:var(--text-muted)">Waiting for build flags to be applied\u2026</span>';
+    clearLog();
+    appendLog(`Starting build: ${currentEnv}`, 'log-info');
+
+    const body = { env: currentEnv, flags: collectFlags() };
+
+    let jobId;
+    try {
+      const res  = await fetch('/api/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      jobId = data.job_id;
+      currentJobId = jobId;
+    } catch (e) {
+      appendLog('Failed to start build: ' + e.message, 'log-error');
+      setStatus('error');
+      setBuilding(false);
+      return;
+    }
+
+    // Queue position polling (runs while job is queued)
+    let _queuePos = null;
+    let _queueTimer = null;
+
+    function startQueuePolling() {
+      if (_queueTimer) return;
+      _queueTimer = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/status/${jobId}`);
+          const d = await r.json();
+          if (d.status === 'queued' && d.queue_position != null) {
+            const pos = d.queue_position;
+            setStatus('queued', `Queue #${pos}`);
+            if (pos !== _queuePos) {
+              _queuePos = pos;
+              appendLog(`[queue] Position in queue: #${pos}`, 'log-warn');
+            }
+          } else {
+            // No longer queued – polling no longer needed; SSE will handle the rest
+            stopQueuePolling();
+          }
+        } catch { /* ignore transient errors */ }
+      }, 2000);
+    }
+
+    function stopQueuePolling() {
+      if (_queueTimer) { clearInterval(_queueTimer); _queueTimer = null; }
+    }
+
+    // Stream SSE log
+    const evtSrc = new EventSource(`/api/log/${jobId}`);
+    evtSrc.onmessage = (e) => {
+      if (e.data === '__DONE__') {
+        stopQueuePolling();
+        evtSrc.close();
+        checkFinalStatus(jobId);
+        return;
+      }
+      let line;
+      try { line = JSON.parse(e.data); } catch { line = e.data; }
+      if (/queued/i.test(line)) {
+        setStatus('queued', 'Queued');
+        startQueuePolling();
+      } else if (/slot acquired/i.test(line)) {
+        stopQueuePolling();
+        setStatus('running');
+      }
+      appendLog(line, logClass(line));
+    };
+    evtSrc.onerror = () => {
+      stopQueuePolling();
+      evtSrc.close();
+      checkFinalStatus(jobId);
+    };
+  }
+
+  async function checkFinalStatus(jobId) {
+    setBuilding(false);
+    try {
+      const res  = await fetch(`/api/status/${jobId}`);
+      const data = await res.json();
+      if (data.status === 'done') {
+        setStatus('done');
+        appendLog('Build complete! Ready to download or flash.', 'log-success');
+
+        const filename = data.filename || 'meshcore_firmware.bin';
+
+        const dlBtn = document.getElementById('downloadBtn');
+        dlBtn.innerHTML = `
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download ${filename}`;
+        dlBtn.classList.add('visible');
+
+        // Fetch firmware binary into memory now — keeps server clean after this point
+        let _fwBuffer = null;
+        try {
+          const fwResp = await fetch(`/api/firmware/${jobId}`);
+          _fwBuffer = await fwResp.arrayBuffer();
+        } catch (e) {
+          appendLog('Warning: could not pre-fetch firmware: ' + e.message, 'log-warn');
+        }
+
+        // Download button — uses in-memory buffer, no server round-trip needed
+        dlBtn.onclick = () => {
+          if (_fwBuffer) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([_fwBuffer], {type: 'application/octet-stream'}));
+            a.download = filename;
+            a.click();
+          }
+        };
+
+        // Flash button — passes buffer to inline flasher
+        window._flashBuffer = _fwBuffer;
+        document.getElementById('flashContainer').classList.add('visible');
+      } else {
+        setStatus('error');
+        appendLog(data.error || 'Build failed.', 'log-error');
+      }
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  document.getElementById('buildBtn').disabled = true;
+  loadVariants();
+
+  // ── Debug panel ────────────────────────────────────────────────────────────
+  let debugOpen    = false;
+  let debugFiles   = {};   // filename → content
+  let debugActive  = null; // currently shown filename
+
+  function toggleDebug() {
+    debugOpen = !debugOpen;
+    const panel = document.getElementById('debugPanel');
+    const btn   = document.getElementById('debugToggleBtn');
+    panel.classList.toggle('visible', debugOpen);
+    btn.style.borderColor = debugOpen ? 'var(--warn)' : 'var(--border)';
+    btn.style.color       = debugOpen ? 'var(--warn)'  : 'var(--text-muted)';
+    if (debugOpen && currentJobId) refreshDebug();
+  }
+
+  async function refreshDebug() {
+    if (!currentJobId) return;
+    const code = document.getElementById('debugCode');
+    try {
+      const res  = await fetch(`/api/debug/${currentJobId}`);
+      const data = await res.json();
+      if (!data.ready) {
+        code.innerHTML = '<span style="color:var(--text-muted)">Flags not yet applied \u2013 try again after the build starts\u2026</span>';
+        return;
+      }
+      debugFiles = data.files;
+      renderDebugTabs();
+      // show first tab if none selected or selected gone
+      if (!debugActive || !debugFiles[debugActive]) {
+        debugActive = Object.keys(debugFiles)[0] || null;
+      }
+      renderDebugContent();
+    } catch (e) {
+      code.innerHTML = `<span style="color:var(--error)">${escHtml(e.message)}</span>`;
+    }
+  }
+
+  function renderDebugTabs() {
+    const tabs = document.getElementById('debugTabs');
+    tabs.innerHTML = '';
+    Object.keys(debugFiles).forEach(name => {
+      const btn = document.createElement('button');
+      btn.className = 'debug-tab' + (name === debugActive ? ' active' : '');
+      btn.title     = name;
+      btn.textContent = name.split('/').pop();   // show just filename in tab
+      btn.onclick   = () => { debugActive = name; renderDebugTabs(); renderDebugContent(); };
+      tabs.appendChild(btn);
+    });
+  }
+
+  function renderDebugContent() {
+    const code = document.getElementById('debugCode');
+    if (!debugActive || !debugFiles[debugActive]) {
+      code.innerHTML = '<span style="color:var(--text-muted)">Select a file above.</span>';
+      return;
+    }
+    code.innerHTML = highlightIni(debugFiles[debugActive]);
+  }
+
+  function highlightIni(text) {
+    return text.split('\n').map(line => {
+      const e = escHtml(line);
+      if (/^\s*;/.test(line))         return `<span class="ini-comment">${e}</span>`;
+      if (/^\s*\[/.test(line))        return `<span class="ini-section">${e}</span>`;
+      if (/^\s*-D\s/.test(line))      return `<span class="ini-flag">${e}</span>`;
+      if (/^\s*\w[^=]*=/.test(line))  {
+        const eq = e.indexOf('=');
+        return `<span class="ini-key">${e.slice(0, eq + 1)}</span>`
+             + `<span class="ini-value">${e.slice(eq + 1)}</span>`;
+      }
+      return e;
+    }).join('\n');
+  }
+
+  // ── Cancel build if the user navigates away or closes the tab ─────────────
+  window.addEventListener('pagehide', () => {
+    if (currentJobId) {
+      navigator.sendBeacon(`/api/cancel/${currentJobId}`);
+    }
+  });
+
+  // ── Serial Console ─────────────────────────────────────────────────────────
+  function consoleLog(text, cls = 'rx') {
+    const box  = document.getElementById('consoleBox');
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    box.appendChild(span);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function clearConsole() {
+    document.getElementById('consoleBox').innerHTML = '';
+  }
+</script>
+
+<script type="module">
+  // ── Inline ESP32 flasher using esptool-js ──────────────────────────────────
+  // Use dynamic imports so Buffer polyfill is guaranteed to be set first.
+
+  window.startFlash = async function() {
+    const buffer = window._flashBuffer;
+    if (!buffer) { alert('No firmware loaded — build first.'); return; }
+
+    const btn        = document.getElementById('flashBtn');
+    const btnText    = document.getElementById('flashBtnText');
+    const progress   = document.getElementById('flashProgress');
+    const fill       = document.getElementById('flashProgressFill');
+    const statusText = document.getElementById('flashStatusText');
+
+    // Show console panel
+    document.getElementById('consolePanel').classList.add('visible');
+
+    btn.disabled = true;
+    progress.classList.add('visible');
+    fill.style.width = '0%';
+    fill.style.background = 'var(--success)';
+    statusText.textContent = 'Loading flasher…';
+
+    let transport;
+    try {
+      // esptool-js bundle.js has exactly one Buffer usage:
+      //   Buffer.from(A,"base64").toString("binary")  — decoding the stub binary
+      // atob(A) is the exact browser equivalent. Patch it directly in the bundle
+      // text so no Buffer polyfill is needed at all.
+      let _esptoolBlobUrl = window._esptoolBlobUrl;
+      if (!_esptoolBlobUrl) {
+        statusText.textContent = 'Loading flasher…';
+        let bundleText = await fetch('https://unpkg.com/esptool-js@0.4.3/bundle.js').then(r => r.text());
+        bundleText = bundleText.replace(
+          'Buffer.from(A,"base64").toString("binary")',
+          'atob(A)'
+        );
+        const blob = new Blob([bundleText], { type: 'application/javascript' });
+        _esptoolBlobUrl = URL.createObjectURL(blob);
+        window._esptoolBlobUrl = _esptoolBlobUrl;
+      }
+      const { ESPLoader, Transport } = await import(_esptoolBlobUrl);
+
+      statusText.textContent = 'Waiting for port selection…';
+      const port = await navigator.serial.requestPort();
+      transport = new Transport(port, false);
+
+      const loader = new ESPLoader({
+        transport,
+        baudrate: 921600,
+        terminal: {
+          clean()         {},
+          writeLine(data) { consoleLog(data + '\n', 'sys'); },
+          write(data)     { consoleLog(data, 'sys'); }
+        }
+      });
+
+      statusText.textContent = 'Connecting to device…';
+      consoleLog('[flash] Connecting to device…\n', 'sys');
+      await loader.main();
+      consoleLog('[flash] Connected. Starting flash…\n', 'sys');
+
+      // Convert ArrayBuffer → binary string (required by esptool-js)
+      const bytes = new Uint8Array(buffer);
+      let binaryStr = '';
+      for (let i = 0; i < bytes.length; i++) binaryStr += String.fromCharCode(bytes[i]);
+
+      statusText.textContent = 'Erasing & flashing…';
+      await loader.writeFlash({
+        fileArray: [{ data: binaryStr, address: 0x0 }],
+        flashSize: 'keep',
+        eraseAll:  false,
+        compress:  true,
+        reportProgress(fileIndex, written, total) {
+          const pct = Math.round((written / total) * 100);
+          fill.style.width = pct + '%';
+          statusText.textContent = `Flashing… ${pct}%`;
+        },
+        calculateMD5Hash(image) {
+          return CryptoJS.MD5(CryptoJS.enc.Latin1.parse(image)).toString();
+        }
+      });
+
+      await transport.disconnect();
+
+      fill.style.width = '100%';
+      statusText.textContent = '✓ Flash complete! Device is restarting…';
+      btnText.textContent = '✓ Flashed Successfully';
+      btn.style.background = '#1a5c38';
+      consoleLog('[flash] ✓ Complete! Device is restarting.\n', 'sys');
+
+    } catch (e) {
+      if (e.name === 'NotFoundError') {
+        progress.classList.remove('visible');
+        btn.disabled = false;
+      } else {
+        statusText.textContent = '✗ ' + e.message;
+        fill.style.background = 'var(--error)';
+        consoleLog('[flash] ✗ Error: ' + e.message + '\n', 'err');
+        btn.disabled = false;
+      }
+      if (transport) { try { await transport.disconnect(); } catch {} }
+    }
+  };
+</script>
+</body>
+</html>

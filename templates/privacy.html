@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeshCore Custom Firmware Builder</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3348;
+      --accent: #4f8ef7;
+      --success: #34d399;
+      --error: #f87171;
+      --warn: #fbbf24;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    header svg {
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 1.3rem;
+      font-weight: 700;
+    }
+
+    header p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .back-link {
+      margin-left: auto;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .back-link:hover {
+      color: var(--accent);
+    }
+
+    /* ── Content ── */
+    .content {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem;
+    }
+
+    .page-title {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+    }
+
+    .page-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 2.5rem;
+    }
+
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .section h2 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section h2 .icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    .icon-green {
+      background: color-mix(in srgb, var(--success) 18%, transparent);
+      color: var(--success);
+    }
+
+    .icon-blue {
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--accent);
+    }
+
+    .icon-yellow {
+      background: color-mix(in srgb, var(--warn) 18%, transparent);
+      color: var(--warn);
+    }
+
+    .icon-red {
+      background: color-mix(in srgb, var(--error) 18%, transparent);
+      color: var(--error);
+    }
+
+    .section p,
+    .section li {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.75;
+    }
+
+    .section ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .section ul li {
+      padding: 0.2rem 0 0.2rem 1.2rem;
+      position: relative;
+    }
+
+    .section ul li::before {
+      content: '·';
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .section p+p {
+      margin-top: 0.6rem;
+    }
+
+    .highlight {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .chip {
+      display: inline-block;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 0.75rem;
+      padding: 0.1rem 0.45rem;
+      color: var(--text-muted);
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.25rem 0.65rem;
+      border-radius: 20px;
+    }
+
+    .badge-green {
+      background: color-mix(in srgb, var(--success) 15%, transparent);
+      color: var(--success);
+      border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+    }
+
+    .badge-blue {
+      background: color-mix(in srgb, var(--accent) 15%, transparent);
+      color: var(--accent);
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+
+    .badge-yellow {
+      background: color-mix(in srgb, var(--warn) 15%, transparent);
+      color: var(--warn);
+      border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+      <circle cx="18" cy="18" r="17" stroke="#4f8ef7" stroke-width="2" />
+      <circle cx="9" cy="18" r="3" fill="#4f8ef7" />
+      <circle cx="18" cy="9" r="3" fill="#4f8ef7" />
+      <circle cx="27" cy="18" r="3" fill="#4f8ef7" />
+      <circle cx="18" cy="27" r="3" fill="#4f8ef7" />
+      <line x1="9" y1="18" x2="18" y2="9" stroke="#4f8ef7" stroke-width="1.5" />
+      <line x1="18" y1="9" x2="27" y2="18" stroke="#4f8ef7" stroke-width="1.5" />
+      <line x1="27" y1="18" x2="18" y2="27" stroke="#4f8ef7" stroke-width="1.5" />
+      <line x1="18" y1="27" x2="9" y2="18" stroke="#4f8ef7" stroke-width="1.5" />
+    </svg>
+    <div>
+      <h1>Heltec v3 MeshCore GPS Firmware Builder</h1>
+      <p>Privacy Policy</p>
+    </div>
+    <a class="back-link" href="/credits" style="margin-left: auto;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+      </svg>
+      Credits
+    </a>
+    <a class="back-link" href="/" style="margin-left: 1rem;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5M12 5l-7 7 7 7" />
+      </svg>
+      Back to Builder
+    </a>
+  </header>
+
+  <div class="content">
+    <div class="page-title">Privacy Policy</div>
+    <div class="page-subtitle">Last updated: March 2026 &nbsp;·&nbsp; MeshCore Custom Firmware Builder</div>
+
+    <!-- What this tool does -->
+    <div class="section">
+      <h2><span class="icon icon-blue">ℹ</span> What This Tool Does</h2>
+      <p>This is a self-hosted web tool that clones the latest
+        <span class="highlight">MeshCore firmware</span> from GitHub,
+        compiles it with your chosen settings using PlatformIO, and delivers the
+        resulting <span class="chip">.bin</span> file to your browser for download
+        or direct USB flashing. It runs entirely on a local server on your own machine —
+        no data leaves your computer to any external service operated by this tool.
+      </p>
+    </div>
+
+    <!-- What you enter -->
+    <div class="section">
+      <h2><span class="icon icon-yellow">✎</span> Information You Enter</h2>
+      <p>To customise your firmware you may enter:</p>
+      <ul>
+        <li><span class="highlight">GPS pin numbers</span> — RX, TX, and Enable GPIO pin assignments</li>
+        <li><span class="highlight">BLE PIN code</span> — the pairing PIN for BLE companion radio builds</li>
+        <li><span class="highlight">WiFi SSID and password</span> — network credentials for WiFi companion radio builds
+        </li>
+        <li><span class="highlight">Repeater advertised name</span> — the name broadcast by the repeater</li>
+        <li><span class="highlight">Repeater admin password</span> — the administrative password for the repeater</li>
+      </ul>
+      <p style="margin-top:0.75rem;">This information is sent over the local loopback network
+        (<span class="chip">127.0.0.1</span>) to the local build server. It is written into
+        the firmware source files, compiled, and then <span class="highlight">permanently
+          deleted</span> as described below. It is never stored in a database, logged to disk,
+        transmitted to a third party, or retained beyond the lifetime of the build.</p>
+    </div>
+
+    <!-- Temporary build files -->
+    <div class="section">
+      <h2><span class="icon icon-green">🗑</span> Temporary Build Files &amp; Automatic Deletion</h2>
+      <p>Each build job creates a temporary directory inside the container's temp folder
+        (<span class="chip">/tmp/meshcore_builds/&lt;job-id&gt;/</span>). This directory
+        contains a full clone of the MeshCore GitHub repository with your custom flags
+        applied, plus the compiled firmware artefacts.</p>
+      <p><span class="highlight">Deletion happens automatically in all of the following cases:</span></p>
+      <ul>
+        <li>Immediately after the compiled <span class="chip">.bin</span> is downloaded by your browser</li>
+        <li>Immediately after the firmware is fetched by the browser for USB flashing</li>
+        <li>If you navigate away from the page while a build is queued or running — the build is cancelled and the
+          directory is wiped</li>
+        <li>Every time the build server starts up — all leftover directories from previous sessions are removed</li>
+      </ul>
+      <p>No firmware binary or build artefact is retained on the server after delivery.</p>
+    </div>
+
+    <!-- USB flashing -->
+    <div class="section">
+      <h2><span class="icon icon-blue">🔌</span> USB Flashing (Web Serial API)</h2>
+      <p>When you click <span class="highlight">Flash Device via USB</span>, your browser
+        uses the <span class="highlight">Web Serial API</span> to communicate directly with
+        your connected ESP32-S3. This is a browser-to-device connection — serial port data
+        goes from your browser to your device only. The local build server is not involved
+        in the flashing process at all, and no serial data is transmitted over any network.</p>
+      <p>You must explicitly grant the browser permission to access the serial port each
+        time you flash. This permission is not stored beyond the current browser session.</p>
+    </div>
+
+    <!-- Third-party resources -->
+    <div class="section">
+      <h2><span class="icon icon-yellow">☁</span> Third-Party Network Requests</h2>
+      <p>The page loads two JavaScript libraries from public CDNs. These requests are made
+        by your browser and are subject to those CDNs' own privacy policies:</p>
+      <ul>
+        <li><span class="chip">cdnjs.cloudflare.com</span> — CryptoJS (used for MD5 checksum
+          verification during USB flashing)</li>
+        <li><span class="chip">unpkg.com</span> — esptool-js (the browser-side ESP32 flash
+          tool, fetched once when you first click Flash)</li>
+      </ul>
+      <p>Beyond these two library fetches, your browser makes no other outbound requests
+        initiated by this tool. The build server itself fetches the MeshCore source code from
+        <span class="chip">github.com/meshcore-dev/MeshCore</span> on your behalf — this is
+        a standard <span class="chip">git clone</span> with no credentials or identifying
+        headers attached.
+      </p>
+    </div>
+
+    <!-- No analytics -->
+    <div class="section">
+      <h2><span class="icon icon-green">✓</span> No Analytics, No Cookies, No Logging</h2>
+      <p>No analytics, telemetry, cookies, user accounts, or session identifiers of any kind. HTTP request logs from the Flask server are suppressed. Build job IDs are random UUIDs generated per-session and discarded on completion.</p>
+    </div>
+
+    <!-- Local hosting -->
+    <div class="section">
+      <h2><span class="icon icon-green">🐳</span> Docker Container — Self-Hosted</h2>
+      <p>This MeshCore custom firmware tool runs as a <span class="highlight">Docker container.</span>
+          The container runs on Linux and has no outbound connections beyond the GitHub clone
+          and the CDN library fetches described above.
+          <p>The only persistent Docker volume is the PlatformIO toolchain cache
+            (<span class="chip">pio-cache:/root/.platformio</span>), which contains compiler
+            toolchains only — no user data, build sources, or compiled firmware.</p>
+    </div>
+
+  </div>
+
+  <footer>
+    MeshCore Custom Firmware Builder &nbsp;·&nbsp;
+    <a href="https://github.com/meshcore-dev/MeshCore" style="color: var(--accent); text-decoration: none;"
+      target="_blank">meshcore-dev/MeshCore</a>
+    &nbsp;·&nbsp;
+    <a href="/credits" style="color: var(--text-muted); text-decoration: none;">Credits</a>
+    &nbsp;·&nbsp;
+    <a href="/" style="color: var(--text-muted); text-decoration: none;">Back to Builder</a>
+  </footer>
+
+</body>
+
+</html>

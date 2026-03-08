@@ -1,0 +1,21 @@
+services:
+  firmware-builder:
+    build: .
+    image: meshcore-firmware-builder
+    container_name: meshcore-builder
+    ports:
+      # Host port 5000 → container port 5000
+      - "5000:5000"
+    volumes:
+      - pio-cache:/root/.platformio
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5000
+    restart: unless-stopped
+    # Increase shared memory size – PlatformIO linker can use it heavily
+    shm_size: 256m
+
+volumes:
+  pio-cache:
+    # Named volume managed by Docker; survives container removal
+    # To wipe the cache: docker volume rm firmware-builder_pio-cache
