@@ -759,7 +759,7 @@
       allVariants.forEach(v => {
         const opt = document.createElement('option');
         opt.value = v.id;
-        opt.textContent = v.arch ? `${v.label} [${v.arch.toUpperCase()}]` : v.label;
+        opt.textContent = v.arch ? `${v.label} (${v.arch.toUpperCase()})` : v.label;
         sel.appendChild(opt);
       });
       if (allVariants.length === 0) {
