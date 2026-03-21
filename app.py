@@ -397,6 +397,7 @@ FLAGS = [
     # ── WiFi ──────────────────────────────────────────────────────────────────
     {"key": "WIFI_SSID",      "label": "WiFi SSID",        "default": "myssid",
      "file": "variant", "section": "$env", "group": "WiFi Settings", "quoted": True,
+     "no_share": True,
      "env_types": ["companion_radio_wifi"]},
     {"key": "WIFI_PWD",       "label": "WiFi Password",    "default": "mypwd",
      "file": "variant", "section": "$env", "group": "WiFi Settings", "quoted": True,
