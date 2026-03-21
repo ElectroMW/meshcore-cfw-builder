@@ -559,6 +559,53 @@ def _inject_hybrid_env(variant_ini: Path, env_id: str,
     variant_ini.write_text(content + block, encoding="utf-8")
 
 
+# ── PlatformIO package cache repair ──────────────────────────────────────────
+
+def _fix_pio_packages() -> list[str]:
+    """
+    Scan ``~/.platformio/packages/`` for package directories whose
+    ``package.json`` manifest is missing, empty, or contains invalid JSON.
+    Such entries are left behind by interrupted / partial downloads and cause
+    PlatformIO's Tool Manager to raise::
+
+        MissingPackageManifestError: Could not find one of 'package.json'
+        manifest files in the package
+
+    This failure is particularly common for the ``toolchain-xtensa-esp32s3``
+    package that the Heltec V3 (ESP32-S3) variant requires.
+
+    Each corrupt directory is removed so that PlatformIO will download a fresh
+    copy during the subsequent build.  Returns the list of removed package
+    names (may be empty).
+    """
+    packages_dir = Path.home() / ".platformio" / "packages"
+    if not packages_dir.exists():
+        return []
+
+    removed: list[str] = []
+    for pkg_dir in packages_dir.iterdir():
+        if not pkg_dir.is_dir():
+            continue
+        manifest = pkg_dir / "package.json"
+        corrupt = False
+        if not manifest.exists():
+            corrupt = True
+        elif manifest.stat().st_size == 0:
+            corrupt = True
+        else:
+            try:
+                json.loads(manifest.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                corrupt = True
+        if corrupt:
+            try:
+                shutil.rmtree(str(pkg_dir))
+                removed.append(pkg_dir.name)
+            except Exception:
+                pass
+    return removed
+
+
 # ── Build worker ─────────────────────────────────────────────────────────────
 
 def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, custom_flags: dict,
@@ -701,7 +748,19 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         if is_cancelled():
             return
 
-        # 3. Run PlatformIO build
+        # 3. Repair any corrupt PlatformIO package manifests before building.
+        # Heltec V3 (ESP32-S3) requires toolchain-xtensa-esp32s3; if a prior
+        # interrupted download left that package directory without a valid
+        # package.json, PlatformIO raises MissingPackageManifestError.
+        removed_pkgs = _fix_pio_packages()
+        if removed_pkgs:
+            log("[builder] Removed corrupt PlatformIO package(s) so they will "
+                "be re-downloaded: " + ", ".join(removed_pkgs))
+
+        if is_cancelled():
+            return
+
+        # 4. Run PlatformIO build
         log(f"[builder] Starting build for env: {env_id} ...")
         pio_cmd = [PIO_EXE, "run", "-e", env_id, "-j", "2"]
         if arch == ARCH_ESP32:
@@ -729,7 +788,7 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         if proc.returncode != 0:
             raise RuntimeError(f"PlatformIO build failed (exit {proc.returncode})")
 
-        # 4. Find output firmware file
+        # 5. Find output firmware file
         build_dir = repo_dir / ".pio" / "build" / env_id
         if arch == ARCH_NRF52:
             # nRF52 produces a .hex file (no mergebin step)

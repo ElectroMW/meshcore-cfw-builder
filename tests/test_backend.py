@@ -321,3 +321,87 @@ class TestHelpers:
         from app import _variant_folder_to_label
         assert _variant_folder_to_label("heltec_v3") == "Heltec V3"
         assert "SX1262" in _variant_folder_to_label("lilygo_tbeam_sx1262")
+
+
+# ── _fix_pio_packages ─────────────────────────────────────────────────────────
+
+class TestFixPioPackages:
+    """Unit tests for the corrupt-package-manifest repair helper."""
+
+    def _packages_dir(self, tmp_path: "Path") -> "Path":
+        d = tmp_path / ".platformio" / "packages"
+        d.mkdir(parents=True)
+        return d
+
+    def test_no_packages_dir_returns_empty(self, tmp_path, monkeypatch):
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "nonexistent")
+        assert _fix_pio_packages() == []
+
+    def test_valid_package_not_removed(self, tmp_path, monkeypatch):
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        pkg = self._packages_dir(tmp_path) / "toolchain-xtensa-esp32"
+        pkg.mkdir()
+        (pkg / "package.json").write_text('{"name": "toolchain-xtensa-esp32", "version": "1.0.0"}')
+        result = _fix_pio_packages()
+        assert result == []
+        assert pkg.exists()
+
+    def test_missing_manifest_removed(self, tmp_path, monkeypatch):
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        pkg = self._packages_dir(tmp_path) / "toolchain-xtensa-esp32s3"
+        pkg.mkdir()
+        # No package.json created — simulates a failed/interrupted download
+        result = _fix_pio_packages()
+        assert "toolchain-xtensa-esp32s3" in result
+        assert not pkg.exists()
+
+    def test_empty_manifest_removed(self, tmp_path, monkeypatch):
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        pkg = self._packages_dir(tmp_path) / "toolchain-xtensa-esp32s3"
+        pkg.mkdir()
+        (pkg / "package.json").write_text("")
+        result = _fix_pio_packages()
+        assert "toolchain-xtensa-esp32s3" in result
+        assert not pkg.exists()
+
+    def test_invalid_json_manifest_removed(self, tmp_path, monkeypatch):
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        pkg = self._packages_dir(tmp_path) / "toolchain-xtensa-esp32s3"
+        pkg.mkdir()
+        (pkg / "package.json").write_text("{not valid json")
+        result = _fix_pio_packages()
+        assert "toolchain-xtensa-esp32s3" in result
+        assert not pkg.exists()
+
+    def test_mixed_packages(self, tmp_path, monkeypatch):
+        """Valid packages are kept; corrupt ones are removed."""
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        pkgs_dir = self._packages_dir(tmp_path)
+
+        good = pkgs_dir / "tool-cmake"
+        good.mkdir()
+        (good / "package.json").write_text('{"name": "tool-cmake"}')
+
+        corrupt = pkgs_dir / "toolchain-xtensa-esp32s3"
+        corrupt.mkdir()
+        # empty manifest
+
+        result = _fix_pio_packages()
+        assert result == ["toolchain-xtensa-esp32s3"]
+        assert good.exists()
+        assert not corrupt.exists()
+
+    def test_non_directory_entries_ignored(self, tmp_path, monkeypatch):
+        """Regular files inside packages/ do not trigger removal."""
+        from app import _fix_pio_packages
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        pkgs_dir = self._packages_dir(tmp_path)
+        (pkgs_dir / "some_file.txt").write_text("hello")
+        result = _fix_pio_packages()
+        assert result == []
