@@ -71,9 +71,12 @@ ENV_SUFFIXES = [
 ]
 
 # Map PlatformIO platform identifiers → short architecture names shown in the UI.
+ARCH_ESP32 = "esp32"
+ARCH_NRF52 = "nrf52"
+
 PLATFORM_ARCH_MAP = {
-    "espressif32": "esp32",
-    "nordicnrf52": "nrf52",
+    "espressif32": ARCH_ESP32,
+    "nordicnrf52": ARCH_NRF52,
 }
 
 VARIANT_CACHE_LOCK         = threading.Lock()
@@ -84,12 +87,14 @@ BRANCH_VARIANT_CACHE:     dict[str, list | None] = {}
 BRANCH_ENV_TO_VARIANT:    dict[str, dict]        = {}  # env_id → variant folder
 BRANCH_ENV_TYPE_MAP:      dict[str, dict]        = {}  # env_id → type_key
 BRANCH_ENV_INJECT_INFO:   dict[str, dict]        = {}  # env_id → inject_info
+BRANCH_ENV_ARCH_MAP:      dict[str, dict]        = {}  # env_id → arch
 
 # Keep a plain reference to the default-branch cache for routes that don't specify a branch
 VARIANT_CACHE: list | None = None   # None = not yet loaded (legacy alias for default branch)
 ENV_TO_VARIANT: dict       = {}     # env_id → variant folder name  (default branch)
 ENV_TYPE_MAP:   dict       = {}     # env_id → type_key             (default branch)
 ENV_INJECT_INFO: dict      = {}     # env_id → inject_info          (default branch)
+ENV_ARCH_MAP:   dict       = {}     # env_id → arch                 (default branch)
 
 
 def _variant_folder_to_label(name: str) -> str:
@@ -239,10 +244,12 @@ def _update_branch_cache(branch: str, data: list):
     e2v = {}
     etm = {}
     eii = {}
+    eam = {}
     for v in data:
         for e in v["envs"]:
             e2v[e["id"]] = v["id"]
             etm[e["id"]] = e["type"]
+            eam[e["id"]] = v.get("arch", ARCH_ESP32)
             if e.get("inject"):
                 eii[e["id"]] = {
                     "base_section":    e["base_section"],
@@ -253,6 +260,7 @@ def _update_branch_cache(branch: str, data: list):
         BRANCH_ENV_TO_VARIANT[branch]  = e2v
         BRANCH_ENV_TYPE_MAP[branch]    = etm
         BRANCH_ENV_INJECT_INFO[branch] = eii
+        BRANCH_ENV_ARCH_MAP[branch]    = eam
         # Keep legacy default-branch aliases in sync
         if branch == _DEFAULT_BRANCH:
             VARIANT_CACHE = data
@@ -262,6 +270,8 @@ def _update_branch_cache(branch: str, data: list):
             ENV_TYPE_MAP.update(etm)
             ENV_INJECT_INFO.clear()
             ENV_INJECT_INFO.update(eii)
+            ENV_ARCH_MAP.clear()
+            ENV_ARCH_MAP.update(eam)
 
 
 def _load_variants_background():
@@ -477,7 +487,7 @@ def _inject_hybrid_env(variant_ini: Path, env_id: str,
 # ── Build worker ─────────────────────────────────────────────────────────────
 
 def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, custom_flags: dict,
-              branch: str = "main"):
+              branch: str = "main", arch: str = ARCH_ESP32):
     job_dir = BUILDS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -618,8 +628,11 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
 
         # 3. Run PlatformIO build
         log(f"[builder] Starting build for env: {env_id} ...")
+        pio_cmd = [PIO_EXE, "run", "-e", env_id, "-j", "2"]
+        if arch != ARCH_NRF52:
+            pio_cmd += ["-t", "mergebin"]
         proc = subprocess.Popen(
-            [PIO_EXE, "run", "-e", env_id, "-t", "mergebin", "-j", "2"],
+            pio_cmd,
             cwd=str(repo_dir),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -641,14 +654,24 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         if proc.returncode != 0:
             raise RuntimeError(f"PlatformIO build failed (exit {proc.returncode})")
 
-        # 4. Find merged bin
-        bin_path = repo_dir / ".pio" / "build" / env_id / "firmware-merged.bin"
-        if not bin_path.exists():
-            # fallback - look for any merged bin
-            matches = list((repo_dir / ".pio" / "build" / env_id).glob("*merged*.bin"))
-            if not matches:
-                raise RuntimeError("Build succeeded but merged .bin not found.")
-            bin_path = matches[0]
+        # 4. Find output firmware file
+        build_dir = repo_dir / ".pio" / "build" / env_id
+        if arch == ARCH_NRF52:
+            # nRF52 produces a .hex file (no mergebin step)
+            bin_path = build_dir / "firmware.hex"
+            if not bin_path.exists():
+                matches = list(build_dir.glob("*.hex"))
+                if not matches:
+                    raise RuntimeError("Build succeeded but firmware .hex not found.")
+                bin_path = matches[0]
+        else:
+            bin_path = build_dir / "firmware-merged.bin"
+            if not bin_path.exists():
+                # fallback - look for any merged bin
+                matches = list(build_dir.glob("*merged*.bin"))
+                if not matches:
+                    raise RuntimeError("Build succeeded but merged .bin not found.")
+                bin_path = matches[0]
 
         with builds_lock:
             builds[job_id]["status"] = "done"
@@ -733,8 +756,10 @@ def api_build():
     with VARIANT_CACHE_LOCK:
         branch_e2v  = BRANCH_ENV_TO_VARIANT.get(branch, ENV_TO_VARIANT)
         branch_etm  = BRANCH_ENV_TYPE_MAP.get(branch, ENV_TYPE_MAP)
+        branch_eam  = BRANCH_ENV_ARCH_MAP.get(branch, ENV_ARCH_MAP)
         variant_folder = branch_e2v.get(env_id)
         env_type       = branch_etm.get(env_id, "")
+        env_arch       = branch_eam.get(env_id, ARCH_ESP32)
 
     if not variant_folder:
         if not VARIANT_READY.is_set():
@@ -758,7 +783,7 @@ def api_build():
 
     t = threading.Thread(
         target=run_build,
-        args=(job_id, env_id, variant_folder, env_type, custom_flags, branch),
+        args=(job_id, env_id, variant_folder, env_type, custom_flags, branch, env_arch),
         daemon=True,
     )
     t.start()
