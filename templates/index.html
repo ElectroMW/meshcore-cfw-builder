@@ -458,10 +458,16 @@
   <div>
     <div class="card">
       <div class="card-title">1 · Select Hardware</div>
+      <div class="field" id="branchField">
+        <label>Branch</label>
+        <select id="branchSelect" onchange="onBranchChange(this.value)">
+          <option value="">Loading branches…</option>
+        </select>
+      </div>
       <div class="field" id="variantField">
         <label>Hardware variant</label>
         <select id="variantSelect" onchange="onVariantChange(this.value)">
-          <option value="">Loading variants…</option>
+          <option value="">-- Select hardware --</option>
         </select>
       </div>
 
@@ -556,21 +562,60 @@
   // ── State ──────────────────────────────────────────────────────────────────
   const FLAGS      = {{ flags | tojson }};
   let allVariants  = [];   // [{id, label, envs:[{id,label,type}]}]
+  let currentBranch  = ''; // selected branch name
   let currentEnv   = null; // selected env_id
   let currentEnvType = ''; // type_key of selected env
   let currentJobId = null;
   let building     = false;
 
+  // ── Branch loading ───────────────────────────────────────────────────────────
+  async function loadBranches() {
+    const sel = document.getElementById('branchSelect');
+    try {
+      const res  = await fetch('/api/branches');
+      const data = await res.json();
+      const branches = data.branches || [];
+      sel.innerHTML = '';
+      if (branches.length === 0) {
+        sel.innerHTML = '<option value="">No branches found</option>';
+        return;
+      }
+      branches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = b;
+        sel.appendChild(opt);
+      });
+      // Default to 'main' if present, otherwise first branch
+      const preferred = branches.includes('main') ? 'main' : branches[0];
+      sel.value = preferred;
+      currentBranch = preferred;
+      await loadVariantsForBranch(preferred);
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load branches</option>';
+    }
+  }
+
+  async function onBranchChange(branch) {
+    currentBranch = branch;
+    // Reset variant/env/flag state
+    const variantSel = document.getElementById('variantSelect');
+    variantSel.innerHTML = '<option value="">Loading variants…</option>';
+    onVariantChange('');
+    await loadVariantsForBranch(branch);
+  }
+
   // ── Variant / env loading ────────────────────────────────────────────────────
-  async function loadVariants() {
+  async function loadVariantsForBranch(branch) {
     const sel = document.getElementById('variantSelect');
     try {
       // Poll until variants are ready (backend discovers them at startup)
       let data;
       for (let attempt = 0; attempt < 30; attempt++) {
-        const res = await fetch('/api/variants');
+        const res = await fetch(`/api/variants?branch=${encodeURIComponent(branch)}`);
         data = await res.json();
         if (data.status === 'ready') break;
+        if (data.status === 'error') throw new Error(data.error || 'Failed to discover variants for the selected branch');
         await new Promise(r => setTimeout(r, 2000));
         if (attempt === 0) sel.options[0].textContent = 'Discovering variants…';
       }
@@ -833,7 +878,7 @@
     clearLog();
     appendLog(`Starting build: ${currentEnv}`, 'log-info');
 
-    const body = { env: currentEnv, flags: collectFlags() };
+    const body = { env: currentEnv, branch: currentBranch, flags: collectFlags() };
 
     let jobId;
     try {
@@ -963,7 +1008,7 @@
 
   // ── Init ───────────────────────────────────────────────────────────────────
   document.getElementById('buildBtn').disabled = true;
-  loadVariants();
+  loadBranches();
 
   // ── Debug panel ────────────────────────────────────────────────────────────
   let debugOpen    = false;
