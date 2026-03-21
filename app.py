@@ -303,15 +303,17 @@ FLAGS = [
      "env_types": ["repeater", "room_server", "repeater_room_hybrid"]},
     {"key": "ADMIN_PASSWORD", "label": "Admin Password",   "default": "password",
      "file": "variant", "section": "$env", "group": "Node Settings", "quoted": True,
+     "no_share": True,
      "env_types": ["repeater", "room_server", "repeater_room_hybrid"]},
     # ── Room Server / Hybrid ─────────────────────────────────────────────────
     {"key": "ROOM_PASSWORD",  "label": "Room Password",    "default": "hello",
      "file": "variant", "section": "$env", "group": "Room Server Settings", "quoted": True,
+     "no_share": True,
      "env_types": ["room_server", "repeater_room_hybrid"]},
     # ── BLE ───────────────────────────────────────────────────────────────────
     {"key": "BLE_PIN_CODE",   "label": "BLE PIN Code",     "default": "123456",
      "file": "variant", "section": "$env", "group": "BLE Settings",
-     "validate": "digits6",
+     "validate": "digits6", "no_share": True,
      "env_types": ["companion_radio_ble"]},
     # ── WiFi ──────────────────────────────────────────────────────────────────
     {"key": "WIFI_SSID",      "label": "WiFi SSID",        "default": "myssid",
@@ -319,6 +321,7 @@ FLAGS = [
      "env_types": ["companion_radio_wifi"]},
     {"key": "WIFI_PWD",       "label": "WiFi Password",    "default": "mypwd",
      "file": "variant", "section": "$env", "group": "WiFi Settings", "quoted": True,
+     "no_share": True,
      "env_types": ["companion_radio_wifi"]},
 ]
 
