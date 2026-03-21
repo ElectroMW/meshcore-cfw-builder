@@ -15,7 +15,7 @@ import pytest
 
 import app as app_module
 from app import ARCH_ESP32, ARCH_NRF52
-from tests.conftest import _make_done_job
+from tests.conftest import make_done_job
 
 
 # ── Index / static routes ─────────────────────────────────────────────────────

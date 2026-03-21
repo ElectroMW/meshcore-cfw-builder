@@ -18,13 +18,13 @@ from playwright.sync_api import Page, expect
 
 import app as app_module
 from app import app as flask_app, ARCH_ESP32, ARCH_NRF52
-from tests.conftest import FAKE_VARIANTS, _make_done_job
+from tests.conftest import FAKE_VARIANTS, make_done_job
 
 
 # ── Live server fixture ───────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
-def _patch_app_for_ui_tests(tmp_path_factory):
+def patch_app_for_ui_tests(tmp_path_factory):
     """
     Patch the Flask app once for the entire UI test session:
       - Disable SSL (tests use plain HTTP)
@@ -63,7 +63,7 @@ def _patch_app_for_ui_tests(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def live_server(_patch_app_for_ui_tests):
+def live_server(patch_app_for_ui_tests):
     """Start the Flask app on a free port for the duration of the test session."""
     import socket
 
@@ -106,15 +106,15 @@ def server_url(live_server):
 
 # ── Helper: inject a done job and return job_id ───────────────────────────────
 
-def _inject_nrf52_job(tmp_path):
+def inject_nrf52_job(tmp_path):
     job_id = "ui-nrf52-test-job"
-    _make_done_job(tmp_path, job_id, arch=ARCH_NRF52, env_id="rak4631_repeater")
+    make_done_job(tmp_path, job_id, arch=ARCH_NRF52, env_id="rak4631_repeater")
     return job_id
 
 
-def _inject_esp32_job(tmp_path):
+def inject_esp32_job(tmp_path):
     job_id = "ui-esp32-test-job"
-    _make_done_job(tmp_path, job_id, arch=ARCH_ESP32, env_id="heltec_v3_repeater")
+    make_done_job(tmp_path, job_id, arch=ARCH_ESP32, env_id="heltec_v3_repeater")
     return job_id
 
 
@@ -201,7 +201,7 @@ class TestDownloadButtons:
         self, page: Page, server_url: str, tmp_path
     ):
         """For an ESP32 job, the hex/bin download button should be visible."""
-        job_id = _inject_esp32_job(tmp_path)
+        job_id = inject_esp32_job(tmp_path)
         try:
             page.goto(server_url)
 
@@ -219,7 +219,7 @@ class TestDownloadButtons:
         self, page: Page, server_url: str, tmp_path
     ):
         """For an nRF52 job, /api/status should report has_zip=true."""
-        job_id = _inject_nrf52_job(tmp_path)
+        job_id = inject_nrf52_job(tmp_path)
         try:
             status_resp = page.request.get(f"{server_url}/api/status/{job_id}")
             assert status_resp.ok
@@ -234,7 +234,7 @@ class TestDownloadButtons:
         self, page: Page, server_url: str, tmp_path
     ):
         """For an nRF52 job, /api/download_zip should return a valid zip file."""
-        job_id = _inject_nrf52_job(tmp_path)
+        job_id = inject_nrf52_job(tmp_path)
         try:
             zip_resp = page.request.get(f"{server_url}/api/download_zip/{job_id}")
             assert zip_resp.ok
@@ -249,7 +249,7 @@ class TestDownloadButtons:
         self, page: Page, server_url: str, tmp_path
     ):
         """Downloading the zip should NOT remove the build job."""
-        job_id = _inject_nrf52_job(tmp_path)
+        job_id = inject_nrf52_job(tmp_path)
         try:
             page.request.get(f"{server_url}/api/download_zip/{job_id}")
             with app_module.builds_lock:
@@ -262,7 +262,7 @@ class TestDownloadButtons:
         self, page: Page, server_url: str, tmp_path
     ):
         """ESP32 builds should return 400 for the zip endpoint."""
-        job_id = _inject_esp32_job(tmp_path)
+        job_id = inject_esp32_job(tmp_path)
         try:
             resp = page.request.get(f"{server_url}/api/download_zip/{job_id}")
             assert resp.status == 400

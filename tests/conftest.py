@@ -106,7 +106,7 @@ def client(tmp_path, monkeypatch):
         yield c
 
 
-def _make_done_job(tmp_path, job_id: str, arch: str = ARCH_ESP32, env_id: str = "heltec_v3_repeater"):
+def make_done_job(tmp_path, job_id: str, arch: str = ARCH_ESP32, env_id: str = "heltec_v3_repeater"):
     """Inject a completed build job into the builds registry and create real temp files."""
     import app as app_module
 
@@ -151,7 +151,7 @@ def _make_done_job(tmp_path, job_id: str, arch: str = ARCH_ESP32, env_id: str = 
 def done_esp32_job(client, tmp_path):
     """A completed ESP32 build job injected into the registry."""
     job_id = "esp32-test-job-id"
-    _make_done_job(tmp_path, job_id, arch=ARCH_ESP32, env_id="heltec_v3_repeater")
+    make_done_job(tmp_path, job_id, arch=ARCH_ESP32, env_id="heltec_v3_repeater")
     yield job_id
     with app_module.builds_lock:
         app_module.builds.pop(job_id, None)
@@ -161,7 +161,7 @@ def done_esp32_job(client, tmp_path):
 def done_nrf52_job(client, tmp_path):
     """A completed nRF52 build job injected into the registry."""
     job_id = "nrf52-test-job-id"
-    _make_done_job(tmp_path, job_id, arch=ARCH_NRF52, env_id="rak4631_repeater")
+    make_done_job(tmp_path, job_id, arch=ARCH_NRF52, env_id="rak4631_repeater")
     yield job_id
     with app_module.builds_lock:
         app_module.builds.pop(job_id, None)
