@@ -532,7 +532,7 @@
           <div class="flash-progress-track"><div class="flash-progress-fill" id="flashProgressFill"></div></div>
           <div class="flash-status-text" id="flashStatusText"></div>
         </div>
-        <div class="flash-note">Requires Chrome or Edge &nbsp;·&nbsp; Connect ESP32 via USB before clicking</div>
+        <div class="flash-note">Requires Chrome or Edge &nbsp;·&nbsp; Connect ESP32 via USB, then select it from the port picker</div>
       </div>
 
       <!-- Serial console: shown after flash button is clicked -->
@@ -1154,7 +1154,16 @@
       }
 
       statusText.textContent = 'Waiting for port selection…';
-      const port = await navigator.serial.requestPort();
+      // Filter the browser port-picker to known ESP32 USB-to-serial chips so
+      // the user is only shown relevant devices and can easily pick the right one.
+      const ESP32_FILTERS = [
+        { usbVendorId: 0x10C4 }, // Silicon Labs CP210x (CP2102/CP2104)
+        { usbVendorId: 0x1A86 }, // WCH CH340 / CH341 / CH9102
+        { usbVendorId: 0x0403 }, // FTDI FT232
+        { usbVendorId: 0x303A }, // Espressif native USB (ESP32-S2 / S3)
+        { usbVendorId: 0x067B }, // Prolific PL2303
+      ];
+      const port = await navigator.serial.requestPort({ filters: ESP32_FILTERS });
       transport = new Transport(port, false);
 
       const loader = new ESPLoader({
