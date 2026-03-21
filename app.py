@@ -967,14 +967,18 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", 5000))
 
-    # HTTPS support: provide SSL_CERT + SSL_KEY paths, or set SSL_ADHOC=true
-    # for a self-signed development certificate (requires pyopenssl).
+    # HTTPS support: provide SSL_CERT + SSL_KEY paths for a real certificate,
+    # or set SSL_ADHOC=false to disable HTTPS entirely.
+    # By default (SSL_ADHOC not set to false and no cert/key pair supplied),
+    # Flask uses a self-signed certificate via pyopenssl.
     ssl_context = None
     ssl_cert = os.environ.get("SSL_CERT", "").strip()
     ssl_key  = os.environ.get("SSL_KEY",  "").strip()
     if ssl_cert and ssl_key:
         ssl_context = (ssl_cert, ssl_key)
-    elif os.environ.get("SSL_ADHOC", "").strip().lower() in ("1", "true", "yes"):
+    elif os.environ.get("SSL_ADHOC", "true").strip().lower() in ("0", "false", "no"):
+        ssl_context = None  # HTTPS explicitly disabled
+    else:
         ssl_context = "adhoc"
 
     url_scheme = "https" if ssl_context else "http"

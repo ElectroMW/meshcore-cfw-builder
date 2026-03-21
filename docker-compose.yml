@@ -13,9 +13,11 @@ services:
       - PORT=5000
       # Optional: override the firmware source repository (must be a public GitHub HTTPS URL)
       # - MESHCORE_REPO_URL=https://github.com/myfork/MeshCore.git
-      # Optional: enable HTTPS with a self-signed certificate (requires pyopenssl)
-      # - SSL_ADHOC=true
-      # Optional: enable HTTPS with your own certificate and key files
+      # HTTPS is enabled by default using a self-signed certificate (requires pyopenssl).
+      # Set SSL_ADHOC=false to disable HTTPS and serve plain HTTP instead.
+      # - SSL_ADHOC=false
+      # Optional: use your own certificate and key files instead of the self-signed cert.
+      # When SSL_CERT and SSL_KEY are set, SSL_ADHOC is ignored.
       # - SSL_CERT=/certs/server.crt
       # - SSL_KEY=/certs/server.key
     restart: unless-stopped
