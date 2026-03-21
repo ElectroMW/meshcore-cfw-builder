@@ -295,6 +295,26 @@
     .flash-btn:hover:not(:disabled) { opacity: 0.85; }
     .flash-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    .dfu-btn {
+      display: flex;
+      width: 100%;
+      background: var(--warn);
+      border: none;
+      border-radius: 9px;
+      color: #1a1200;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.85rem;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .dfu-btn:hover:not(:disabled) { opacity: 0.85; }
+    .dfu-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
     .flash-progress {
       display: none;
       margin-top: 0.75rem;
@@ -552,6 +572,13 @@
       </button>
 
       <div class="flash-container" id="flashContainer">
+        <button class="dfu-btn" id="dfuBtn" onclick="triggerDfuMode()" style="display:none">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
+            <path d="M23 4v6h-6"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          <span id="dfuBtnText">Enter DFU Mode</span>
+        </button>
         <button class="flash-btn" id="flashBtn" onclick="startFlash()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0">
             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -562,7 +589,7 @@
           <div class="flash-progress-track"><div class="flash-progress-fill" id="flashProgressFill"></div></div>
           <div class="flash-status-text" id="flashStatusText"></div>
         </div>
-        <div class="flash-note">Requires Chrome or Edge &nbsp;·&nbsp; Connect ESP32 via USB before clicking</div>
+        <div class="flash-note" id="flashNote">Requires Chrome or Edge &nbsp;·&nbsp; Connect device via USB, then select it from the port picker</div>
       </div>
 
       <!-- Serial console: shown after flash button is clicked -->
@@ -591,10 +618,11 @@
 <script>
   // ── State ──────────────────────────────────────────────────────────────────
   const FLAGS      = {{ flags | tojson }};
-  let allVariants  = [];   // [{id, label, envs:[{id,label,type}]}]
+  let allVariants  = [];   // [{id, label, arch, envs:[{id,label,type}]}]
   let currentBranch  = ''; // selected branch name
   let currentEnv   = null; // selected env_id
   let currentEnvType = ''; // type_key of selected env
+  let currentArch  = '';   // architecture detected from platformio.ini ('esp32', 'nrf52', …)
   let currentJobId = null;
   let building     = false;
   let useCustomFlags = false;
@@ -655,7 +683,7 @@
       allVariants.forEach(v => {
         const opt = document.createElement('option');
         opt.value = v.id;
-        opt.textContent = v.label;
+        opt.textContent = v.arch ? `${v.label} [${v.arch.toUpperCase()}]` : v.label;
         sel.appendChild(opt);
       });
       if (allVariants.length === 0) {
@@ -676,6 +704,7 @@
 
     currentEnv     = null;
     currentEnvType = '';
+    currentArch    = '';
     envGrid.innerHTML = '';
     flagsCont.innerHTML = '';
     envGrid.style.display = 'none';
@@ -688,6 +717,7 @@
 
     const variant = allVariants.find(v => v.id === variantId);
     if (!variant || !variant.envs.length) return;
+    currentArch = variant.arch || '';
 
     // Populate firmware-type buttons
     envGrid.innerHTML = '';
@@ -925,6 +955,8 @@
     document.getElementById('downloadBtn').classList.remove('visible');
     document.getElementById('flashContainer').classList.remove('visible');
     document.getElementById('consolePanel').classList.remove('visible');
+    // Reset DFU button text so it's fresh for the next build
+    document.getElementById('dfuBtnText').textContent = 'Enter DFU Mode';
     // Reset debug panel
     debugFiles  = {};
     debugActive = null;
@@ -1053,6 +1085,18 @@
         // Flash button — passes buffer to inline flasher
         window._flashBuffer = _fwBuffer;
         document.getElementById('flashContainer').classList.add('visible');
+
+        // Show DFU mode button only for nRF52 variants; update hint text accordingly
+        const dfuBtn    = document.getElementById('dfuBtn');
+        const flashNote = document.getElementById('flashNote');
+        if (currentArch === 'nrf52') {
+          dfuBtn.style.display = '';
+          dfuBtn.disabled      = false;
+          flashNote.innerHTML  = 'Requires Chrome or Edge &nbsp;·&nbsp; Enter DFU mode first, then connect and flash';
+        } else {
+          dfuBtn.style.display = 'none';
+          flashNote.innerHTML  = 'Requires Chrome or Edge &nbsp;·&nbsp; Connect device via USB, then select it from the port picker';
+        }
       } else {
         setStatus('error');
         appendLog(data.error || 'Build failed.', 'log-error');
@@ -1166,6 +1210,70 @@
   // ── Inline ESP32 flasher using esptool-js ──────────────────────────────────
   // Use dynamic imports so Buffer polyfill is guaranteed to be set first.
 
+  // ── nRF52 DFU mode trigger (1200-baud touch) ────────────────────────────────
+  window.triggerDfuMode = async function() {
+    if (!navigator.serial) {
+      alert('Web Serial API not available. Please use Chrome or Edge over HTTPS.');
+      return;
+    }
+
+    const dfuBtn     = document.getElementById('dfuBtn');
+    const dfuBtnText = document.getElementById('dfuBtnText');
+    const flashBtn   = document.getElementById('flashBtn');
+    const progress   = document.getElementById('flashProgress');
+    const fill       = document.getElementById('flashProgressFill');
+    const statusText = document.getElementById('flashStatusText');
+
+    document.getElementById('consolePanel').classList.add('visible');
+    dfuBtn.disabled  = true;
+    flashBtn.disabled = true;
+    progress.classList.add('visible');
+    fill.style.width = '0%';
+    fill.style.background = 'var(--warn)';
+    statusText.textContent = 'Waiting for port selection…';
+
+    // Common nRF52 USB vendor IDs
+    const NRF52_FILTERS = [
+      { usbVendorId: 0x239A }, // Adafruit
+      { usbVendorId: 0x1915 }, // Nordic Semiconductor
+      { usbVendorId: 0x2886 }, // Seeed Studio (XIAO nRF52840)
+      { usbVendorId: 0x2FE3 }, // SparkFun
+    ];
+
+    let port;
+    let portOpened = false;
+    try {
+      port = await navigator.serial.requestPort({ filters: NRF52_FILTERS });
+      statusText.textContent = 'Triggering DFU mode (1200-baud touch)…';
+      consoleLog('[dfu] Opening port at 1200 baud…\n', 'sys');
+      await port.open({ baudRate: 1200 });
+      portOpened = true;
+      await port.setSignals({ dataTerminalReady: false });
+      // Brief pause so the nRF52 bootloader can register the DTR transition before the port closes
+      await new Promise(r => setTimeout(r, 200));
+      await port.close();
+      portOpened = false;
+
+      fill.style.width = '100%';
+      statusText.textContent = '✓ DFU mode triggered — device is rebooting into bootloader';
+      dfuBtnText.textContent = '✓ DFU Mode Active';
+      consoleLog('[dfu] ✓ DFU mode triggered. Device is rebooting into bootloader.\n', 'sys');
+      dfuBtn.disabled  = false;
+      flashBtn.disabled = false;
+    } catch (e) {
+      if (e.name === 'NotFoundError') {
+        progress.classList.remove('visible');
+      } else {
+        fill.style.background = 'var(--error)';
+        statusText.textContent = '✗ ' + e.message;
+        consoleLog('[dfu] ✗ Error: ' + e.message + '\n', 'err');
+      }
+      dfuBtn.disabled  = false;
+      flashBtn.disabled = false;
+      if (port && portOpened) { try { await port.close(); } catch (ce) { consoleLog('[dfu] Warning: ' + ce.message + '\n', 'sys'); } }
+    }
+  };
+
   window.startFlash = async function() {
     const buffer = window._flashBuffer;
     if (!buffer) { alert('No firmware loaded — build first.'); return; }
@@ -1205,8 +1313,21 @@
       }
       const { ESPLoader, Transport } = await import(_esptoolBlobUrl);
 
+      if (!navigator.serial) {
+        throw new Error('Web Serial API not available. Please use Chrome or Edge over HTTPS.');
+      }
+
       statusText.textContent = 'Waiting for port selection…';
-      const port = await navigator.serial.requestPort();
+      // Filter the browser port-picker to known ESP32 USB-to-serial chips so
+      // the user is only shown relevant devices and can easily pick the right one.
+      const ESP32_FILTERS = [
+        { usbVendorId: 0x10C4 }, // Silicon Labs CP210x (CP2102/CP2104)
+        { usbVendorId: 0x1A86 }, // WCH CH340 / CH341 / CH9102
+        { usbVendorId: 0x0403 }, // FTDI FT232
+        { usbVendorId: 0x303A }, // Espressif native USB (ESP32-S2 / S3)
+        { usbVendorId: 0x067B }, // Prolific PL2303
+      ];
+      const port = await navigator.serial.requestPort({ filters: ESP32_FILTERS });
       transport = new Transport(port, false);
 
       const loader = new ESPLoader({

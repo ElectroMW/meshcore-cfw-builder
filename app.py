@@ -70,6 +70,12 @@ ENV_SUFFIXES = [
     ("_repeater",                "Repeater",                     "repeater"),
 ]
 
+# Map PlatformIO platform identifiers → short architecture names shown in the UI.
+PLATFORM_ARCH_MAP = {
+    "espressif32": "esp32",
+    "nordicnrf52": "nrf52",
+}
+
 VARIANT_CACHE_LOCK         = threading.Lock()
 VARIANT_READY              = threading.Event()
 
@@ -101,6 +107,16 @@ def _variant_folder_to_label(name: str) -> str:
 def _env_matches_suffix(env_name: str, suffix: str) -> bool:
     """Return True if env_name (possibly with trailing underscore) ends with suffix."""
     return env_name.rstrip('_').lower().endswith(suffix.lower())
+
+
+def _detect_arch(content: str) -> str:
+    """Return the short architecture name detected from a platformio.ini content string."""
+    m = re.search(r'^\s*platform\s*=\s*(\S+)', content, re.MULTILINE | re.IGNORECASE)
+    if m:
+        # Strip any version specifier (e.g. "espressif32@6.5.0" → "espressif32")
+        platform = m.group(1).split('@')[0].lower()
+        return PLATFORM_ARCH_MAP.get(platform, platform)
+    return ""
 
 
 def _parse_github_repo(url: str):
@@ -199,10 +215,15 @@ def _discover_variants(branch: str = "main") -> list:
                 })
 
             if matching:
-                results[folder] = matching
+                results[folder] = {"envs": matching, "arch": _detect_arch(content)}
 
     return [
-        {"id": folder, "label": _variant_folder_to_label(folder), "envs": results[folder]}
+        {
+            "id":    folder,
+            "label": _variant_folder_to_label(folder),
+            "arch":  results[folder]["arch"],
+            "envs":  results[folder]["envs"],
+        }
         for folder in sorted(results, key=str.lower)
     ]
 
