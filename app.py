@@ -71,12 +71,23 @@ ENV_SUFFIXES = [
 ]
 
 # Map PlatformIO platform identifiers → short architecture names shown in the UI.
-ARCH_ESP32 = "esp32"
-ARCH_NRF52 = "nrf52"
+ARCH_ESP32  = "esp32"
+ARCH_NRF52  = "nrf52"
+ARCH_RP2040 = "rp2040"
+ARCH_STM32  = "stm32"
 
 PLATFORM_ARCH_MAP = {
     "espressif32": ARCH_ESP32,
     "nordicnrf52": ARCH_NRF52,
+}
+
+# The root platformio.ini defines base sections whose names encode the architecture.
+# Stripping the "_base" suffix gives the arch name (e.g. "esp32_base" → "esp32").
+BASE_SECTION_ARCH_MAP = {
+    "esp32_base":  ARCH_ESP32,
+    "nrf52_base":  ARCH_NRF52,
+    "rp2040_base": ARCH_RP2040,
+    "stm32_base":  ARCH_STM32,
 }
 
 VARIANT_CACHE_LOCK         = threading.Lock()
@@ -101,7 +112,7 @@ def _variant_folder_to_label(name: str) -> str:
     """heltec_v3 → 'Heltec V3',  lilygo_tbeam_supreme_SX1262 → 'LilyGo TBeam Supreme SX1262'"""
     UPPER_WORDS = {
         "sx1262", "sx1268", "sx1276", "ble", "usb", "gps", "nrf", "nrf52",
-        "rp2040", "esp32", "e22", "ct62", "c3", "c6", "s3", "l1",
+        "rp2040", "esp32", "stm32", "e22", "ct62", "c3", "c6", "s3", "l1",
         "v2", "v3", "v4", "m1", "m2", "m3", "m5", "m6",
     }
     parts = re.split(r'[-_]', name)
@@ -115,13 +126,55 @@ def _env_matches_suffix(env_name: str, suffix: str) -> bool:
 
 
 def _detect_arch(content: str) -> str:
-    """Return the short architecture name detected from a platformio.ini content string."""
+    """Return the short architecture name detected from a platformio.ini content string.
+
+    Checks for ``extends = <arch>_base`` directives first — base sections with that
+    naming convention are defined in the root platformio.ini and encode the arch in
+    their name.  Falls back to searching for a ``platform = ...`` line directly.
+    """
+    # Primary: extends = <arch>_base (base sections live in the root platformio.ini)
+    for m in re.finditer(r'^\s*extends\s*=\s*(\S+)', content, re.MULTILINE | re.IGNORECASE):
+        base_sec = m.group(1).strip().lower()
+        if base_sec in BASE_SECTION_ARCH_MAP:
+            return BASE_SECTION_ARCH_MAP[base_sec]
+
+    # Fallback: platform = <platform_id> defined directly in the variant ini
     m = re.search(r'^\s*platform\s*=\s*(\S+)', content, re.MULTILINE | re.IGNORECASE)
     if m:
         # Strip any version specifier (e.g. "espressif32@6.5.0" → "espressif32")
         platform = m.group(1).split('@')[0].lower()
         return PLATFORM_ARCH_MAP.get(platform, platform)
     return ""
+
+
+def _detect_env_arch(content: str, env_id: str) -> str:
+    """Return the arch for a specific env_id within a platformio.ini content string.
+
+    Searches the ``[env:{env_id}]`` section for an ``extends = <arch>_base`` or
+    ``platform = ...`` directive before falling back to file-level detection.
+    """
+    env_m = re.search(
+        r'^\[env:' + re.escape(env_id) + r'\](.*?)(?=^\[|\Z)',
+        content, re.MULTILINE | re.DOTALL,
+    )
+    if env_m:
+        env_body = env_m.group(1)
+
+        # extends = <arch>_base in the env section
+        ext_m = re.search(r'^\s*extends\s*=\s*(\S+)', env_body, re.MULTILINE | re.IGNORECASE)
+        if ext_m:
+            base_sec = ext_m.group(1).strip().lower()
+            if base_sec in BASE_SECTION_ARCH_MAP:
+                return BASE_SECTION_ARCH_MAP[base_sec]
+
+        # platform = ... in the env section
+        plat_m = re.search(r'^\s*platform\s*=\s*(\S+)', env_body, re.MULTILINE | re.IGNORECASE)
+        if plat_m:
+            platform = plat_m.group(1).split('@')[0].lower()
+            return PLATFORM_ARCH_MAP.get(platform, platform)
+
+    # Fall back to file-level detection (searches all sections in the file)
+    return _detect_arch(content)
 
 
 def _parse_github_repo(url: str):
@@ -220,7 +273,23 @@ def _discover_variants(branch: str = "main") -> list:
                 })
 
             if matching:
-                results[folder] = {"envs": matching, "arch": _detect_arch(content)}
+                # Detect arch per-env for real (non-synthetic) envs.
+                for env in matching:
+                    if not env.get("inject"):
+                        env["arch"] = _detect_env_arch(content, env["id"])
+
+                # Synthetic hybrid envs inherit arch from their parent repeater env.
+                for env in matching:
+                    if env.get("inject"):
+                        parent = next(
+                            (e for e in matching if e["id"] == env.get("repeater_env_id")),
+                            None,
+                        )
+                        env["arch"] = parent["arch"] if parent else _detect_arch(content)
+
+                # Variant-level arch: first non-empty env arch (used for the UI dropdown label).
+                variant_arch = next((e["arch"] for e in matching if e["arch"]), "")
+                results[folder] = {"envs": matching, "arch": variant_arch}
 
     return [
         {
@@ -249,7 +318,7 @@ def _update_branch_cache(branch: str, data: list):
         for e in v["envs"]:
             e2v[e["id"]] = v["id"]
             etm[e["id"]] = e["type"]
-            eam[e["id"]] = v.get("arch", ARCH_ESP32)
+            eam[e["id"]] = e.get("arch") or v.get("arch") or ARCH_ESP32
             if e.get("inject"):
                 eii[e["id"]] = {
                     "base_section":    e["base_section"],
@@ -632,7 +701,7 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         # 3. Run PlatformIO build
         log(f"[builder] Starting build for env: {env_id} ...")
         pio_cmd = [PIO_EXE, "run", "-e", env_id, "-j", "2"]
-        if arch != ARCH_NRF52:
+        if arch == ARCH_ESP32:
             pio_cmd += ["-t", "mergebin"]
         proc = subprocess.Popen(
             pio_cmd,
@@ -667,13 +736,21 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
                 if not matches:
                     raise RuntimeError("Build succeeded but firmware .hex not found.")
                 bin_path = matches[0]
-        else:
+        elif arch == ARCH_ESP32:
             bin_path = build_dir / "firmware-merged.bin"
             if not bin_path.exists():
                 # fallback - look for any merged bin
                 matches = list(build_dir.glob("*merged*.bin"))
                 if not matches:
                     raise RuntimeError("Build succeeded but merged .bin not found.")
+                bin_path = matches[0]
+        else:
+            # RP2040, STM32, and other architectures: plain firmware.bin (no mergebin step)
+            bin_path = build_dir / "firmware.bin"
+            if not bin_path.exists():
+                matches = list(build_dir.glob("*.bin"))
+                if not matches:
+                    raise RuntimeError("Build succeeded but firmware .bin not found.")
                 bin_path = matches[0]
 
         with builds_lock:
