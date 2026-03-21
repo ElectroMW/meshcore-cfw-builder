@@ -290,6 +290,26 @@
     .download-btn.visible { display: flex; }
     .download-btn:hover { opacity: 0.85; }
 
+    .download-zip-btn {
+      display: none;
+      width: 100%;
+      margin-top: 0.5rem;
+      background: var(--accent);
+      border: none;
+      border-radius: 9px;
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.85rem;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .download-zip-btn.visible { display: flex; }
+    .download-zip-btn:hover { opacity: 0.85; }
+
     .reset-btn {
       display: none;
       width: 100%;
@@ -617,6 +637,15 @@
           <line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
         Download firmware-merged.bin
+      </button>
+
+      <button class="download-zip-btn" id="downloadZipBtn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download DFU .zip
       </button>
 
       <div class="flash-container" id="flashContainer">
@@ -1112,6 +1141,7 @@
     setBuilding(true);
     setStatus('running');
     document.getElementById('downloadBtn').classList.remove('visible');
+    document.getElementById('downloadZipBtn').classList.remove('visible');
     document.getElementById('flashContainer').classList.remove('visible');
     document.getElementById('consolePanel').classList.remove('visible');
     document.getElementById('resetBtn').classList.remove('visible');
@@ -1223,6 +1253,20 @@
           Download ${filename}`;
         dlBtn.classList.add('visible');
 
+        // For nRF52 builds, pre-fetch the DFU zip before the firmware fetch wipes the job
+        let _zipBuffer = null;
+        const dlZipBtn = document.getElementById('downloadZipBtn');
+        if (currentArch === 'nrf52' && data.has_zip) {
+          try {
+            const zipResp = await fetch(`/api/download_zip/${jobId}`);
+            if (zipResp.ok) {
+              _zipBuffer = await zipResp.arrayBuffer();
+            }
+          } catch (e) {
+            appendLog('Warning: could not pre-fetch DFU zip: ' + e.message, 'log-warn');
+          }
+        }
+
         // Fetch firmware binary into memory now — keeps server clean after this point
         let _fwBuffer = null;
         try {
@@ -1241,6 +1285,27 @@
             a.click();
           }
         };
+
+        // ZIP download button — visible for nRF52 builds only
+        if (_zipBuffer) {
+          const zipFilename = data.zip_filename || `meshcore_${currentEnv}.zip`;
+          dlZipBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download ${zipFilename}`;
+          dlZipBtn.classList.add('visible');
+          dlZipBtn.onclick = () => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([_zipBuffer], {type: 'application/zip'}));
+            a.download = zipFilename;
+            a.click();
+          };
+        } else {
+          dlZipBtn.classList.remove('visible');
+        }
 
         // Flash button — passes buffer to inline flasher
         window._flashBuffer = _fwBuffer;

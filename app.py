@@ -3,11 +3,13 @@ MeshCore Firmware Web Builder
 Clones the latest MeshCore from GitHub, applies custom flags, builds, and serves the merged .bin
 """
 
+import io
 import os
 import re
 import json
 import uuid
 import shutil
+import zipfile
 import subprocess
 import threading
 import tempfile
@@ -754,9 +756,19 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
                     raise RuntimeError("Build succeeded but firmware .bin not found.")
                 bin_path = matches[0]
 
+        # For nRF52 builds, package the hex into a DFU zip as well
+        zip_path = None
+        if arch == ARCH_NRF52:
+            zip_path = build_dir / "firmware_dfu.zip"
+            with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(str(bin_path), bin_path.name)
+            log(f"[builder] ✓ DFU zip created: {zip_path.name}")
+
         with builds_lock:
             builds[job_id]["status"] = "done"
             builds[job_id]["bin_path"] = str(bin_path)
+            if zip_path is not None:
+                builds[job_id]["zip_path"] = str(zip_path)
 
         log(f"[builder] ✓ Build complete! {bin_path.name}")
 
@@ -970,10 +982,13 @@ def api_status(job_id: str):
                     break
             queue_position = pos
 
+        has_zip = bool(job.get("zip_path"))
         return jsonify({
             "status":         job["status"],
             "error":          job["error"],
             "filename":       _env_filename(env_id, job.get("arch", ARCH_ESP32)),
+            "has_zip":        has_zip,
+            "zip_filename":   f"meshcore_{env_id}.zip" if has_zip else None,
             "queue_position": queue_position,
         })
 
@@ -1019,10 +1034,42 @@ def api_download(job_id: str):
         builds.pop(job_id, None)
 
     return send_file(
-        __import__('io').BytesIO(bin_data),
+        io.BytesIO(bin_data),
         as_attachment=True,
         download_name=download_name,
         mimetype="application/octet-stream"
+    )
+
+
+@app.route("/api/download_zip/<job_id>")
+def api_download_zip(job_id: str):
+    """Serve the nRF52 DFU zip file.
+
+    The zip is read into memory and returned without wiping build artefacts —
+    the caller is expected to follow up with /api/firmware which performs the
+    final cleanup.
+    """
+    with builds_lock:
+        if job_id not in builds:
+            return jsonify({"error": "Unknown job"}), 404
+        job = dict(builds[job_id])
+
+    if job["status"] != "done" or not job.get("zip_path"):
+        return jsonify({"error": "Zip not available"}), 400
+
+    zip_path = Path(job["zip_path"])
+    if not zip_path.exists():
+        return jsonify({"error": "Zip file not found"}), 404
+
+    env_id = job.get("env_id", "")
+    download_name = f"meshcore_{env_id}.zip"
+    zip_data = zip_path.read_bytes()
+
+    return send_file(
+        io.BytesIO(zip_data),
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="application/zip"
     )
 
 
@@ -1085,7 +1132,7 @@ def api_firmware(job_id: str):
         builds.pop(job_id, None)
 
     resp = send_file(
-        __import__('io').BytesIO(bin_data),
+        io.BytesIO(bin_data),
         mimetype="application/octet-stream"
     )
     resp.headers["Access-Control-Allow-Origin"] = "*"
