@@ -8,7 +8,6 @@ submit a build — we only verify UI state and interactivity.
 """
 
 import io
-import json
 import queue
 import threading
 import time

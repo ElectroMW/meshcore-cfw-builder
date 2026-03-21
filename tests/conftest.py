@@ -2,10 +2,7 @@
 Shared pytest fixtures for MeshCore firmware builder tests.
 """
 
-import io
-import json
 import queue
-import threading
 import zipfile
 import pytest
 

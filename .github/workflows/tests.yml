@@ -18,11 +18,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install application dependencies
-        run: pip install flask>=3.0.0 pyopenssl>=26.0.0
-
-      - name: Install test dependencies
-        run: pip install -r requirements-test.txt
+      - name: Install dependencies
+        run: |
+          pip install "flask>=3.0.0" "pyopenssl>=26.0.0"
+          pip install -r requirements-test.txt
 
       - name: Run backend tests
         run: pytest tests/test_backend.py -v --tb=short
@@ -38,11 +37,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install application dependencies
-        run: pip install flask>=3.0.0 pyopenssl>=26.0.0
-
-      - name: Install test dependencies
-        run: pip install -r requirements-test.txt
+      - name: Install dependencies
+        run: |
+          pip install "flask>=3.0.0" "pyopenssl>=26.0.0"
+          pip install -r requirements-test.txt
 
       - name: Install Playwright browsers
         run: playwright install --with-deps chromium
