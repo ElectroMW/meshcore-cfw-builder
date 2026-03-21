@@ -556,7 +556,7 @@
           <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
         </svg>
-        Copy Link
+        <span id="shareLinkBtnText">Copy Link</span>
       </button>
     </div>
   </div>
@@ -656,6 +656,7 @@
 
   // ── URL GET parameter helpers ─────────────────────────────────────────────
   const _urlParams = new URLSearchParams(window.location.search);
+  let _urlParamsApplied = false; // ensure URL params are applied only once
 
   function _getParam(name) {
     return _urlParams.get(name);
@@ -687,10 +688,11 @@
     }
     const url = `${location.origin}${location.pathname}?${params.toString()}`;
     const btn = document.getElementById('shareLinkBtn');
+    const label = document.getElementById('shareLinkBtnText');
     navigator.clipboard.writeText(url).then(() => {
-      const orig = btn.innerHTML;
-      btn.innerHTML = '✓ Copied!';
-      setTimeout(() => { btn.innerHTML = orig; }, 2000);
+      const orig = label.textContent;
+      label.textContent = '✓ Copied!';
+      setTimeout(() => { label.textContent = orig; }, 2000);
     }).catch(() => {
       prompt('Copy this link:', url);
     });
@@ -847,8 +849,8 @@
       groups[f.group].push(f);
     });
 
-    // Collect any flag values supplied via URL params (applied once on first render)
-    const urlFlagParams = _getFlagParams();
+    // Collect any flag values supplied via URL params (applied only on first render)
+    const urlFlagParams = _urlParamsApplied ? {} : _getFlagParams();
 
     container.innerHTML = '';
     const hasFlags = Object.keys(groups).length > 0;
@@ -896,15 +898,18 @@
       container.appendChild(groupEl);
     }
 
-    // Enable custom flags if URL param 'flags' is set to 1/true, and only on first render
+    // Enable custom flags if URL param 'flags' is set to 1/true (applied only once)
     const flagsParam = _getParam('flags');
-    if (flagsParam === '1' || flagsParam === 'true') {
+    if (!_urlParamsApplied && (flagsParam === '1' || flagsParam === 'true')) {
+      _urlParamsApplied = true;
       const chk = document.getElementById('customFlagsChk');
       if (chk && !useCustomFlags) {
         chk.checked = true;
         toggleCustomFlags(true);
         return; // toggleCustomFlags calls applyFlagsEnabledState
       }
+    } else if (!_urlParamsApplied) {
+      _urlParamsApplied = true;
     }
     applyFlagsEnabledState();
   }
