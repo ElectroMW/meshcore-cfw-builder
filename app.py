@@ -25,6 +25,10 @@ app = Flask(__name__)
 
 GITHUB_URL = "https://github.com/meshcore-dev/MeshCore.git"
 
+# Allow operators to override the firmware source repository via environment variable.
+# Example: docker run -e MESHCORE_REPO_URL=https://github.com/myfork/MeshCore.git ...
+MESHCORE_REPO_URL = os.environ.get("MESHCORE_REPO_URL", GITHUB_URL).strip()
+
 # Locate the PlatformIO executable — works on both Windows (dev) and Linux (Docker)
 if os.name == "nt":  # Windows
     PIO_EXE = str(Path.home() / ".platformio" / "penv" / "Scripts" / "pio.exe")
@@ -66,12 +70,20 @@ ENV_SUFFIXES = [
     ("_repeater",                "Repeater",                     "repeater"),
 ]
 
-VARIANT_CACHE: list | None = None   # None = not yet loaded
-ENV_TO_VARIANT: dict       = {}     # env_id → variant folder name
-ENV_TYPE_MAP:   dict       = {}     # env_id → type_key
-ENV_INJECT_INFO: dict      = {}     # env_id → {base_section, repeater_env_id} for synthetic hybrids
 VARIANT_CACHE_LOCK         = threading.Lock()
 VARIANT_READY              = threading.Event()
+
+# Per-branch caches  – branch name → list-of-variant-dicts (or None while loading)
+BRANCH_VARIANT_CACHE:     dict[str, list | None] = {}
+BRANCH_ENV_TO_VARIANT:    dict[str, dict]        = {}  # env_id → variant folder
+BRANCH_ENV_TYPE_MAP:      dict[str, dict]        = {}  # env_id → type_key
+BRANCH_ENV_INJECT_INFO:   dict[str, dict]        = {}  # env_id → inject_info
+
+# Keep a plain reference to the default-branch cache for routes that don't specify a branch
+VARIANT_CACHE: list | None = None   # None = not yet loaded (legacy alias for default branch)
+ENV_TO_VARIANT: dict       = {}     # env_id → variant folder name  (default branch)
+ENV_TYPE_MAP:   dict       = {}     # env_id → type_key             (default branch)
+ENV_INJECT_INFO: dict      = {}     # env_id → inject_info          (default branch)
 
 
 def _variant_folder_to_label(name: str) -> str:
@@ -91,9 +103,43 @@ def _env_matches_suffix(env_name: str, suffix: str) -> bool:
     return env_name.rstrip('_').lower().endswith(suffix.lower())
 
 
-def _fetch_variant_ini(folder: str):
+def _parse_github_repo(url: str):
+    """
+    Return (owner, repo) if *url* is a GitHub HTTPS URL, otherwise None.
+    Handles both  https://github.com/owner/repo  and  …/owner/repo.git
+    """
+    m = re.match(r'https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$', url)
+    if m:
+        return m.group(1), m.group(2)
+    return None
+
+
+def _get_branches(repo_url: str) -> list[str]:
+    """
+    Return a sorted list of branch names for *repo_url*.
+    Uses ``git ls-remote --heads`` so it works with any public Git host.
+    Returns an empty list on any error.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", repo_url],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
+        )
+        branches = []
+        for line in result.stdout.splitlines():
+            m = re.match(r'^[0-9a-f]+\trefs/heads/(.+)$', line)
+            if m:
+                branches.append(m.group(1))
+        return sorted(branches)
+    except Exception:
+        return []
+
+
+def _fetch_variant_ini(args):
     """Fetch a variant's platformio.ini from GitHub raw. Returns (folder, content|None)."""
-    url = f"https://raw.githubusercontent.com/meshcore-dev/MeshCore/main/variants/{folder}/platformio.ini"
+    folder, owner, repo, branch = args
+    url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/variants/{folder}/platformio.ini"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "MeshCore-Builder/1.0"})
         with urllib.request.urlopen(req, timeout=12) as resp:
@@ -102,9 +148,13 @@ def _fetch_variant_ini(folder: str):
         return folder, None
 
 
-def _discover_variants() -> list:
+def _discover_variants(branch: str = "main") -> list:
     """Fetch variants from GitHub; return sorted list of {id, label, envs} dicts."""
-    tree_url = "https://api.github.com/repos/meshcore-dev/MeshCore/git/trees/HEAD?recursive=1"
+    gh = _parse_github_repo(MESHCORE_REPO_URL)
+    if gh is None:
+        raise ValueError(f"MESHCORE_REPO_URL is not a recognised GitHub HTTPS URL: {MESHCORE_REPO_URL!r}")
+    owner, repo = gh
+    tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
     req = urllib.request.Request(tree_url, headers={"User-Agent": "MeshCore-Builder/1.0"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         tree = json.loads(resp.read())
@@ -116,8 +166,9 @@ def _discover_variants() -> list:
     ]
 
     results = {}
+    args_list = [(folder, owner, repo, branch) for folder in folders]
     with ThreadPoolExecutor(max_workers=12) as pool:
-        for folder, content in pool.map(_fetch_variant_ini, folders):
+        for folder, content in pool.map(_fetch_variant_ini, args_list):
             if not content:
                 continue
             all_envs = re.findall(r'\[env:([^\]]+)\]', content)
@@ -158,32 +209,52 @@ def _discover_variants() -> list:
 
 VARIANT_REFRESH_INTERVAL = 3600  # seconds between background refreshes
 
+_DEFAULT_BRANCH = "main"   # updated to first branch in the repo list once branches are known
+
+
+def _update_branch_cache(branch: str, data: list):
+    """Store *data* in the per-branch cache and refresh the global default-branch aliases."""
+    global VARIANT_CACHE, _DEFAULT_BRANCH
+    e2v = {}
+    etm = {}
+    eii = {}
+    for v in data:
+        for e in v["envs"]:
+            e2v[e["id"]] = v["id"]
+            etm[e["id"]] = e["type"]
+            if e.get("inject"):
+                eii[e["id"]] = {
+                    "base_section":    e["base_section"],
+                    "repeater_env_id": e["repeater_env_id"],
+                }
+    with VARIANT_CACHE_LOCK:
+        BRANCH_VARIANT_CACHE[branch]   = data
+        BRANCH_ENV_TO_VARIANT[branch]  = e2v
+        BRANCH_ENV_TYPE_MAP[branch]    = etm
+        BRANCH_ENV_INJECT_INFO[branch] = eii
+        # Keep legacy default-branch aliases in sync
+        if branch == _DEFAULT_BRANCH:
+            VARIANT_CACHE = data
+            ENV_TO_VARIANT.clear()
+            ENV_TO_VARIANT.update(e2v)
+            ENV_TYPE_MAP.clear()
+            ENV_TYPE_MAP.update(etm)
+            ENV_INJECT_INFO.clear()
+            ENV_INJECT_INFO.update(eii)
+
 
 def _load_variants_background():
-    global VARIANT_CACHE
+    global VARIANT_CACHE, _DEFAULT_BRANCH
     first_run = True
     while True:
         try:
-            data = _discover_variants()
+            data = _discover_variants(branch=_DEFAULT_BRANCH)
         except Exception as exc:
             app.logger.error(f"Variant discovery failed: {exc}")
             data = None  # keep existing cache on failure
 
         if data is not None:
-            with VARIANT_CACHE_LOCK:
-                VARIANT_CACHE = data
-                ENV_TO_VARIANT.clear()
-                ENV_TYPE_MAP.clear()
-                ENV_INJECT_INFO.clear()
-                for v in data:
-                    for e in v["envs"]:
-                        ENV_TO_VARIANT[e["id"]] = v["id"]
-                        ENV_TYPE_MAP[e["id"]]   = e["type"]
-                        if e.get("inject"):
-                            ENV_INJECT_INFO[e["id"]] = {
-                                "base_section":    e["base_section"],
-                                "repeater_env_id": e["repeater_env_id"],
-                            }
+            _update_branch_cache(_DEFAULT_BRANCH, data)
             if first_run:
                 VARIANT_READY.set()
                 first_run = False
@@ -192,6 +263,7 @@ def _load_variants_background():
 
 
 threading.Thread(target=_load_variants_background, daemon=True).start()
+
 
 # ── Configurable flags ───────────────────────────────────────────────────────
 # section:   "$env"          → inject into [env:{env_id}]
@@ -383,7 +455,8 @@ def _inject_hybrid_env(variant_ini: Path, env_id: str,
 
 # ── Build worker ─────────────────────────────────────────────────────────────
 
-def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, custom_flags: dict):
+def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, custom_flags: dict,
+              branch: str = "main"):
     job_dir = BUILDS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -432,9 +505,9 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
             return
 
         # 1. Clone repo
-        log(f"[builder] Cloning {GITHUB_URL} ...")
+        log(f"[builder] Cloning {MESHCORE_REPO_URL} (branch: {branch}) ...")
         clone_proc = subprocess.Popen(
-            ["git", "clone", "--depth=1", GITHUB_URL, str(job_dir / "repo")],
+            ["git", "clone", "--depth=1", "--branch", branch, MESHCORE_REPO_URL, str(job_dir / "repo")],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace"
         )
@@ -461,7 +534,8 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
 
         # 1b. Inject hybrid env block if this is a synthetic repeater+room env
         with VARIANT_CACHE_LOCK:
-            inject_info = ENV_INJECT_INFO.get(env_id)
+            branch_inject = BRANCH_ENV_INJECT_INFO.get(branch, {})
+            inject_info = branch_inject.get(env_id)
         if inject_info:
             variant_ini = repo_dir / "variants" / variant_folder / "platformio.ini"
             if variant_ini.exists():
@@ -590,13 +664,37 @@ def credits():
     return render_template("credits.html")
 
 
+@app.route("/api/branches")
+def api_branches():
+    """Return the sorted list of branch names for the configured firmware repo."""
+    branches = _get_branches(MESHCORE_REPO_URL)
+    return jsonify({"branches": branches, "repo_url": MESHCORE_REPO_URL})
+
+
 @app.route("/api/variants")
 def api_variants():
-    """Return the list of hardware variants and their available envs."""
+    """Return the list of hardware variants and their available envs.
+
+    Optional query parameter:
+        branch  – which branch to fetch variants for (default: the background-loaded branch).
+                  If the requested branch is not yet cached a synchronous fetch is performed.
+    """
+    branch = request.args.get("branch", "").strip() or _DEFAULT_BRANCH
     with VARIANT_CACHE_LOCK:
-        data = VARIANT_CACHE
+        data = BRANCH_VARIANT_CACHE.get(branch)
+
     if data is None:
-        return jsonify({"status": "loading", "variants": []})
+        # First request for this branch – check if the default is still loading
+        if branch == _DEFAULT_BRANCH and not VARIANT_READY.is_set():
+            return jsonify({"status": "loading", "variants": []})
+        # Fetch on demand for non-default (or never-loaded default) branches
+        try:
+            data = _discover_variants(branch=branch)
+            _update_branch_cache(branch, data)
+        except Exception as exc:
+            app.logger.error(f"Variant discovery for branch {branch!r} failed: {exc}")
+            return jsonify({"status": "error", "error": str(exc), "variants": []}), 502
+
     return jsonify({"status": "ready", "variants": data})
 
 
@@ -609,13 +707,16 @@ def api_flags():
 def api_build():
     data = request.get_json(force=True)
     env_id = data.get("env")
+    branch = data.get("branch", "").strip() or _DEFAULT_BRANCH
 
     with VARIANT_CACHE_LOCK:
-        variant_folder = ENV_TO_VARIANT.get(env_id)
-        env_type       = ENV_TYPE_MAP.get(env_id, "")
+        branch_e2v  = BRANCH_ENV_TO_VARIANT.get(branch, ENV_TO_VARIANT)
+        branch_etm  = BRANCH_ENV_TYPE_MAP.get(branch, ENV_TYPE_MAP)
+        variant_folder = branch_e2v.get(env_id)
+        env_type       = branch_etm.get(env_id, "")
 
     if not variant_folder:
-        if VARIANT_CACHE is None:
+        if not VARIANT_READY.is_set():
             return jsonify({"error": "Variants still loading – please wait and try again"}), 503
         return jsonify({"error": "Invalid env"}), 400
 
@@ -634,7 +735,11 @@ def api_build():
             "current_proc": None,
         }
 
-    t = threading.Thread(target=run_build, args=(job_id, env_id, variant_folder, env_type, custom_flags), daemon=True)
+    t = threading.Thread(
+        target=run_build,
+        args=(job_id, env_id, variant_folder, env_type, custom_flags, branch),
+        daemon=True,
+    )
     t.start()
 
     return jsonify({"job_id": job_id})

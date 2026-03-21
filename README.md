@@ -32,6 +32,23 @@ Then open [http://localhost:5000](http://localhost:5000).
 
 PlatformIO packages are cached in a named Docker volume (`pio-cache`) so subsequent builds are fast.
 
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `5000` | Listen port |
+| `MESHCORE_REPO_URL` | `https://github.com/meshcore-dev/MeshCore.git` | Firmware source repository (must be a public GitHub HTTPS URL). Override to point at a fork. |
+
+To use a custom fork:
+
+```bash
+docker run -e MESHCORE_REPO_URL=https://github.com/myfork/MeshCore.git \
+           -p 5000:5000 christian45410/meshcore-cfw-builder
+```
+
+The branch selector in the UI will list all branches of the configured repository so you can build from any branch.
+
 ## Run locally (dev)
 
 ```bash
