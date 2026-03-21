@@ -13,6 +13,11 @@ services:
       - PORT=5000
       # Optional: override the firmware source repository (must be a public GitHub HTTPS URL)
       # - MESHCORE_REPO_URL=https://github.com/myfork/MeshCore.git
+      # Optional: enable HTTPS with a self-signed certificate (requires pyopenssl)
+      # - SSL_ADHOC=true
+      # Optional: enable HTTPS with your own certificate and key files
+      # - SSL_CERT=/certs/server.crt
+      # - SSL_KEY=/certs/server.key
     restart: unless-stopped
     # Increase shared memory size – PlatformIO linker can use it heavily
     shm_size: 256m

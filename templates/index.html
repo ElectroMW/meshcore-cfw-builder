@@ -129,6 +129,30 @@
       color: var(--accent);
     }
 
+    /* custom-flags toggle */
+    .flags-toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.9rem;
+    }
+    .flags-toggle-row input[type="checkbox"] {
+      width: 1rem;
+      height: 1rem;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+    .flags-toggle-row label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--text);
+      margin: 0;
+    }
+    #flagsContainer.flags-disabled { opacity: 0.45; pointer-events: none; }
+
     /* flag groups */
     .flag-group { margin-bottom: 1.2rem; }
     .flag-group-title {
@@ -475,6 +499,12 @@
       <div class="env-grid" id="envGrid" style="display:none"></div>
 
       <div class="card-title" id="flagsTitle" style="display:none">3 · Customise Build Flags</div>
+      <div class="flags-toggle-row" id="flagsToggleRow" style="display:none">
+        <label>
+          <input type="checkbox" id="customFlagsChk" onchange="toggleCustomFlags(this.checked)">
+          Enable custom build flags
+        </label>
+      </div>
       <div id="flagsContainer"></div>
 
       <button class="build-btn" id="buildBtn" onclick="startBuild()">
@@ -567,6 +597,7 @@
   let currentEnvType = ''; // type_key of selected env
   let currentJobId = null;
   let building     = false;
+  let useCustomFlags = false;
 
   // ── Branch loading ───────────────────────────────────────────────────────────
   async function loadBranches() {
@@ -639,6 +670,7 @@
     const envGrid   = document.getElementById('envGrid');
     const fwTitle   = document.getElementById('fwTypeTitle');
     const flagsTitle = document.getElementById('flagsTitle');
+    const flagsToggleRow = document.getElementById('flagsToggleRow');
     const flagsCont = document.getElementById('flagsContainer');
     const buildBtn  = document.getElementById('buildBtn');
 
@@ -649,6 +681,7 @@
     envGrid.style.display = 'none';
     fwTitle.style.display = 'none';
     flagsTitle.style.display = 'none';
+    flagsToggleRow.style.display = 'none';
     buildBtn.disabled = true;
 
     if (!variantId) return;
@@ -684,6 +717,7 @@
     currentEnvType = btn.dataset.type || '';
     renderFlags();
     document.getElementById('flagsTitle').style.display = 'block';
+    document.getElementById('flagsToggleRow').style.display = 'flex';
     updateBuildReady();
   }
 
@@ -744,6 +778,23 @@
       });
       container.appendChild(groupEl);
     }
+    applyFlagsEnabledState();
+  }
+
+  // ── Custom flags toggle ───────────────────────────────────────────────────────
+  function toggleCustomFlags(checked) {
+    useCustomFlags = checked;
+    applyFlagsEnabledState();
+    updateBuildReady();
+  }
+
+  function applyFlagsEnabledState() {
+    const container = document.getElementById('flagsContainer');
+    if (useCustomFlags) {
+      container.classList.remove('flags-disabled');
+    } else {
+      container.classList.add('flags-disabled');
+    }
   }
 
   function escHtml(s) {
@@ -783,6 +834,8 @@
 
   // ── Validation ────────────────────────────────────────────────────────────────
   function validateFlags() {
+    // When custom flags are disabled, skip validation
+    if (!useCustomFlags) return true;
     // Check all flags with validate==='digits6'
     return FLAGS.filter(flagApplies).every(f => {
       if (f.validate !== 'digits6') return true;
@@ -798,6 +851,9 @@
 
   // ── Build ──────────────────────────────────────────────────────────────────
   function collectFlags() {
+    // Return empty flags when custom flags are not enabled, so builds
+    // without custom flags are cached properly by the backend
+    if (!useCustomFlags) return {};
     const out = {};
     FLAGS.filter(flagApplies).forEach(f => {
       const el = document.getElementById(`flag_${f.key}`);

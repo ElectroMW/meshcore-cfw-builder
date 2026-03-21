@@ -966,7 +966,19 @@ def api_firmware(job_id: str):
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", 5000))
+
+    # HTTPS support: provide SSL_CERT + SSL_KEY paths, or set SSL_ADHOC=true
+    # for a self-signed development certificate (requires pyopenssl).
+    ssl_context = None
+    ssl_cert = os.environ.get("SSL_CERT", "").strip()
+    ssl_key  = os.environ.get("SSL_KEY",  "").strip()
+    if ssl_cert and ssl_key:
+        ssl_context = (ssl_cert, ssl_key)
+    elif os.environ.get("SSL_ADHOC", "").strip().lower() in ("1", "true", "yes"):
+        ssl_context = "adhoc"
+
+    url_scheme = "https" if ssl_context else "http"
     print(f"Using pio: {PIO_EXE}")
     print(f"Build temp dir: {BUILDS_DIR}")
-    print(f"Listening on http://{host}:{port}")
-    app.run(host=host, port=port, debug=False)
+    print(f"Listening on {url_scheme}://{host}:{port}")
+    app.run(host=host, port=port, debug=False, ssl_context=ssl_context)
