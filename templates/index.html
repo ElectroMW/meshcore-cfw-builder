@@ -662,10 +662,11 @@
     return _urlParams.get(name);
   }
 
-  // Returns flag values provided via URL params (e.g. ?ADVERT_NAME=MyNode)
+  // Returns flag values provided via URL params (e.g. ?ADVERT_NAME=MyNode).
+  // Flags marked no_share are never read from URL params.
   function _getFlagParams() {
     const result = {};
-    const flagKeys = new Set(FLAGS.map(f => f.key));
+    const flagKeys = new Set(FLAGS.filter(f => !f.no_share).map(f => f.key));
     _urlParams.forEach((value, key) => {
       if (flagKeys.has(key)) result[key] = value;
     });
@@ -682,6 +683,7 @@
     if (useCustomFlags) {
       params.set('flags', '1');
       FLAGS.filter(flagApplies).forEach(f => {
+        if (f.no_share) return; // never include password/sensitive flags in shared URLs
         const el = document.getElementById(`flag_${f.key}`);
         if (el && el.value !== f.default) params.set(f.key, el.value);
       });
