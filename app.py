@@ -777,6 +777,7 @@ def api_build():
             "error": None,
             "env_id": env_id,
             "variant_folder": variant_folder,
+            "arch": env_arch,
             "cancelled": False,
             "current_proc": None,
         }
@@ -891,14 +892,15 @@ def api_status(job_id: str):
         return jsonify({
             "status":         job["status"],
             "error":          job["error"],
-            "filename":       _env_filename(env_id),
+            "filename":       _env_filename(env_id, job.get("arch", ARCH_ESP32)),
             "queue_position": queue_position,
         })
 
 
-def _env_filename(env_id: str) -> str:
-    """Generate a download filename from env_id."""
-    return f"meshcore_{env_id}.bin"
+def _env_filename(env_id: str, arch: str = ARCH_ESP32) -> str:
+    """Generate a download filename from env_id, using the correct extension for the arch."""
+    ext = ".hex" if arch == ARCH_NRF52 else ".bin"
+    return f"meshcore_{env_id}{ext}"
 
 
 def _env_display_label(env_id: str) -> str:
@@ -924,7 +926,7 @@ def api_download(job_id: str):
 
     bin_path = Path(job["bin_path"])
     env_id = job.get("env_id", "")
-    download_name = _env_filename(env_id)
+    download_name = _env_filename(env_id, job.get("arch", ARCH_ESP32))
 
     # Read binary into memory so we can clean up the temp dir immediately
     bin_data = bin_path.read_bytes()
