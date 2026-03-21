@@ -208,6 +208,26 @@
     .build-btn:hover:not(:disabled) { background: var(--accent-dark); }
     .build-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* ── Share link button ── */
+    .share-link-btn {
+      width: 100%;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.5rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      margin-top: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+    }
+    .share-link-btn:hover { border-color: var(--accent); color: var(--accent); }
+
     /* ── Log panel ── */
     .log-panel { position: sticky; top: 1rem; }
     .log-header {
@@ -531,6 +551,13 @@
         <span class="spinner" id="buildSpinner"></span>
         <span id="buildBtnText">⚡ Build Firmware</span>
       </button>
+      <button class="share-link-btn" id="shareLinkBtn" onclick="copyShareLink()" title="Copy a shareable link with the current selections pre-filled">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+        Copy Link
+      </button>
     </div>
   </div>
 
@@ -627,6 +654,48 @@
   let building     = false;
   let useCustomFlags = false;
 
+  // ── URL GET parameter helpers ─────────────────────────────────────────────
+  const _urlParams = new URLSearchParams(window.location.search);
+
+  function _getParam(name) {
+    return _urlParams.get(name);
+  }
+
+  // Returns flag values provided via URL params (e.g. ?ADVERT_NAME=MyNode)
+  function _getFlagParams() {
+    const result = {};
+    const flagKeys = new Set(FLAGS.map(f => f.key));
+    _urlParams.forEach((value, key) => {
+      if (flagKeys.has(key)) result[key] = value;
+    });
+    return result;
+  }
+
+  // ── Share / copy-link button ──────────────────────────────────────────────
+  function copyShareLink() {
+    const params = new URLSearchParams();
+    if (currentBranch) params.set('branch', currentBranch);
+    const variantSel = document.getElementById('variantSelect');
+    if (variantSel.value) params.set('variant', variantSel.value);
+    if (currentEnv) params.set('env', currentEnv);
+    if (useCustomFlags) {
+      params.set('flags', '1');
+      FLAGS.filter(flagApplies).forEach(f => {
+        const el = document.getElementById(`flag_${f.key}`);
+        if (el && el.value !== f.default) params.set(f.key, el.value);
+      });
+    }
+    const url = `${location.origin}${location.pathname}?${params.toString()}`;
+    const btn = document.getElementById('shareLinkBtn');
+    navigator.clipboard.writeText(url).then(() => {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✓ Copied!';
+      setTimeout(() => { btn.innerHTML = orig; }, 2000);
+    }).catch(() => {
+      prompt('Copy this link:', url);
+    });
+  }
+
   // ── Branch loading ───────────────────────────────────────────────────────────
   async function loadBranches() {
     const sel = document.getElementById('branchSelect');
@@ -645,8 +714,11 @@
         opt.textContent = b;
         sel.appendChild(opt);
       });
-      // Default to 'main' if present, otherwise first branch
-      const preferred = branches.includes('main') ? 'main' : branches[0];
+      // Prefer branch from URL param, then 'main', then first branch
+      const paramBranch = _getParam('branch');
+      const preferred = (paramBranch && branches.includes(paramBranch))
+        ? paramBranch
+        : (branches.includes('main') ? 'main' : branches[0]);
       sel.value = preferred;
       currentBranch = preferred;
       await loadVariantsForBranch(preferred);
@@ -688,6 +760,13 @@
       });
       if (allVariants.length === 0) {
         sel.innerHTML = '<option value="">No variants found</option>';
+        return;
+      }
+      // Pre-select variant from URL param if present
+      const paramVariant = _getParam('variant');
+      if (paramVariant && allVariants.find(v => v.id === paramVariant)) {
+        sel.value = paramVariant;
+        onVariantChange(paramVariant);
       }
     } catch (e) {
       sel.innerHTML = '<option value="">Failed to load variants</option>';
@@ -734,9 +813,11 @@
     envGrid.style.display   = 'grid';
     fwTitle.style.display   = 'block';
 
-    // Auto-select first env
-    const firstBtn = envGrid.querySelector('.env-btn');
-    if (firstBtn) selectEnv(firstBtn);
+    // Auto-select env from URL param if present, otherwise first env
+    const paramEnv = _getParam('env');
+    const targetBtn = (paramEnv && envGrid.querySelector(`[data-env="${CSS.escape(paramEnv)}"]`))
+      || envGrid.querySelector('.env-btn');
+    if (targetBtn) selectEnv(targetBtn);
   }
 
   // ── Env selection ─────────────────────────────────────────────────────────────
@@ -766,6 +847,9 @@
       groups[f.group].push(f);
     });
 
+    // Collect any flag values supplied via URL params (applied once on first render)
+    const urlFlagParams = _getFlagParams();
+
     container.innerHTML = '';
     const hasFlags = Object.keys(groups).length > 0;
     if (flagsTitle) flagsTitle.style.display = hasFlags ? 'block' : 'none';
@@ -776,7 +860,10 @@
       flags.forEach(flag => {
         const storageKey = `flag_${flag.key}`;
         const stored = localStorage.getItem(storageKey);
-        const value  = stored !== null ? stored : flag.default;
+        // URL param takes priority, then localStorage, then default
+        const value = (urlFlagParams[flag.key] !== undefined)
+          ? urlFlagParams[flag.key]
+          : (stored !== null ? stored : flag.default);
         const row = document.createElement('div');
         row.className = 'flag-row';
 
@@ -807,6 +894,17 @@
         }
       });
       container.appendChild(groupEl);
+    }
+
+    // Enable custom flags if URL param 'flags' is set to 1/true, and only on first render
+    const flagsParam = _getParam('flags');
+    if (flagsParam === '1' || flagsParam === 'true') {
+      const chk = document.getElementById('customFlagsChk');
+      if (chk && !useCustomFlags) {
+        chk.checked = true;
+        toggleCustomFlags(true);
+        return; // toggleCustomFlags calls applyFlagsEnabledState
+      }
     }
     applyFlagsEnabledState();
   }
