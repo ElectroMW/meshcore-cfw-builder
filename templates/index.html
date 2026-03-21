@@ -1149,6 +1149,10 @@
       }
       const { ESPLoader, Transport } = await import(_esptoolBlobUrl);
 
+      if (!navigator.serial) {
+        throw new Error('Web Serial API not available. Please use Chrome or Edge over HTTPS.');
+      }
+
       statusText.textContent = 'Waiting for port selection…';
       const port = await navigator.serial.requestPort();
       transport = new Transport(port, false);
