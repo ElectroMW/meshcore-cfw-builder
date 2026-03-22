@@ -3,6 +3,7 @@ MeshCore Firmware Web Builder
 Clones the latest MeshCore from GitHub, applies custom flags, builds, and serves the merged .bin
 """
 
+import hashlib
 import io
 import os
 import re
@@ -59,6 +60,20 @@ build_semaphore = threading.Semaphore(MAX_CONCURRENT_BUILDS)
 # job_id -> { status, log_queue, bin_path, error, env_id }
 builds: dict[str, dict] = {}
 builds_lock = threading.Lock()
+
+# ── Build result cache ───────────────────────────────────────────────────────
+# Successful builds are cached so identical requests (same env, branch, flags)
+# are served instantly without re-running PlatformIO.
+BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "meshcore_build_cache"
+BUILD_CACHE_DIR.mkdir(exist_ok=True)
+BUILD_CACHE: dict[str, dict] = {}   # cache_key → {bin_path, zip_path, arch, env_id}
+BUILD_CACHE_LOCK = threading.Lock()
+
+
+def _build_cache_key(env_id: str, branch: str, flags: dict) -> str:
+    """Return a stable hex digest identifying a (env, branch, flags) combination."""
+    canonical = json.dumps({"env": env_id, "branch": branch, "flags": flags}, sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 # ── Variant / environment discovery ─────────────────────────────────────────
 # Firmware types we expose, matched against env names in each variant ini.
@@ -720,27 +735,6 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
             debug_files[f"variants/{variant_folder}/platformio.ini"] = \
                 _v_ini.read_text(encoding="utf-8")
 
-        # Check whether examples/simple_repeater_room_server exists
-        _hybrid_dir = repo_dir / "examples" / "simple_repeater_room_server"
-        _bundled    = EXTRA_EXAMPLES_DIR / "simple_repeater_room_server"
-        if _hybrid_dir.exists() and _hybrid_dir.is_dir():
-            _files  = sorted(p.name for p in _hybrid_dir.iterdir())
-            _source = "bundled with builder app" if _bundled.exists() else "present in GitHub repo"
-            debug_files["examples/simple_repeater_room_server"] = (
-                f"; Folder EXISTS ({_source})\n"
-                f"; Path: {_hybrid_dir}\n"
-                f";\n"
-                f"; Files:\n" +
-                "".join(f";   {f}\n" for f in _files)
-            )
-        else:
-            debug_files["examples/simple_repeater_room_server"] = (
-                f"; *** Folder NOT FOUND ***\n"
-                f"; Checked: {_hybrid_dir}\n"
-                f"; Bundled copy: {'FOUND at ' + str(_bundled) if _bundled.exists() else 'NOT FOUND'}\n"
-                f"; This firmware type will fail to build.\n"
-            )
-
         with builds_lock:
             if job_id in builds:
                 builds[job_id]["debug_files"] = debug_files
@@ -831,6 +825,27 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
 
         log(f"[builder] ✓ Build complete! {bin_path.name}")
 
+        # ── Cache the result so identical requests are served instantly ───────
+        cache_key = _build_cache_key(env_id, branch, custom_flags)
+        cache_entry_dir = BUILD_CACHE_DIR / cache_key
+        try:
+            cache_entry_dir.mkdir(exist_ok=True)
+            cached_bin = cache_entry_dir / bin_path.name
+            shutil.copy2(str(bin_path), str(cached_bin))
+            cached_zip = None
+            if zip_path is not None:
+                cached_zip = cache_entry_dir / zip_path.name
+                shutil.copy2(str(zip_path), str(cached_zip))
+            with BUILD_CACHE_LOCK:
+                BUILD_CACHE[cache_key] = {
+                    "bin_path": str(cached_bin),
+                    "zip_path": str(cached_zip) if cached_zip else None,
+                    "arch":     arch,
+                    "env_id":   env_id,
+                }
+        except (OSError, IOError) as cache_exc:
+            log(f"[builder] Warning: could not cache build result: {cache_exc}")
+
     except Exception as exc:
         if not is_cancelled():
             with builds_lock:
@@ -919,6 +934,32 @@ def api_build():
         return jsonify({"error": "Invalid env"}), 400
 
     custom_flags = data.get("flags", {})
+
+    # ── Cache check ──────────────────────────────────────────────────────────
+    cache_key = _build_cache_key(env_id, branch, custom_flags)
+    with BUILD_CACHE_LOCK:
+        cached = BUILD_CACHE.get(cache_key)
+    if cached and Path(cached["bin_path"]).exists():
+        job_id = str(uuid.uuid4())
+        q: queue.Queue = queue.Queue()
+        q.put(f"[cache] Returning cached firmware for {env_id}.")
+        q.put(None)  # sentinel — tells the SSE stream this is done
+        with builds_lock:
+            builds[job_id] = {
+                "status": "done",
+                "log_queue": q,
+                "bin_path": cached["bin_path"],
+                "zip_path": cached.get("zip_path"),
+                "error": None,
+                "env_id": env_id,
+                "variant_folder": variant_folder,
+                "arch": cached["arch"],
+                "cancelled": False,
+                "current_proc": None,
+                "debug_files": {},
+            }
+        return jsonify({"job_id": job_id})
+
     job_id = str(uuid.uuid4())
 
     with builds_lock:

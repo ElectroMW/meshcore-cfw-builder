@@ -1065,6 +1065,8 @@
   function setBuilding(on) {
     building = on;
     document.getElementById('buildBtn').disabled = on || !currentEnv;
+    document.getElementById('branchSelect').disabled = on;
+    document.getElementById('variantSelect').disabled = on;
     const spinner = document.getElementById('buildSpinner');
     const txt     = document.getElementById('buildBtnText');
     spinner.classList.toggle('active', on);
@@ -1109,6 +1111,7 @@
   }
 
   function resetBuild() {
+    setBuilding(false);
     setStatus('idle');
     document.getElementById('downloadBtn').classList.remove('visible');
     document.getElementById('flashContainer').classList.remove('visible');
