@@ -70,20 +70,27 @@ BUILD_CACHE: dict[str, dict] = {}   # cache_key → {bin_path, zip_path, arch, e
 BUILD_CACHE_LOCK = threading.Lock()
 
 
-def _build_cache_key(env_id: str, branch: str, flags: dict, commit: str = "") -> str:
-    """Return a stable hex digest identifying a (env, branch, flags, commit) combination."""
+def _build_cache_key(variant: str, firmware_type: str, branch: str, commit: str = "") -> str:
+    """Return a stable hex digest for a (variant, firmware_type, branch, commit) combination.
+
+    Builds that use custom flags are never cached, so flags are not included
+    in the key.  The commit hash is resolved via ``_get_branch_head_commit``
+    (git ls-remote — no checkout required).
+    """
     canonical = json.dumps(
-        {"env": env_id, "branch": branch, "flags": flags, "commit": commit},
+        {"variant": variant, "firmware_type": firmware_type, "branch": branch, "commit": commit},
         sort_keys=True,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _get_branch_head_commit(branch: str) -> str:
-    """Return the HEAD commit hash for *branch* on the remote repo via git ls-remote.
+    """Return the HEAD commit hash for *branch* via ``git ls-remote`` — no checkout performed.
 
-    Returns an empty string when the remote is unreachable or the ref is not
-    found, so callers fall back to a cache miss gracefully.
+    Querying the remote ref is a lightweight read-only operation; the repo is
+    never cloned or modified.  Returns an empty string when the remote is
+    unreachable or the ref is not found so callers treat the result as a cache
+    miss gracefully.
     """
     try:
         result = subprocess.run(
