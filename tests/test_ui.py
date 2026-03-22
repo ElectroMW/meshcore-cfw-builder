@@ -301,3 +301,67 @@ class TestBuildButtonBehaviour:
         # The env grid should now be visible
         page.wait_for_selector("#envGrid", state="visible", timeout=3000)
         expect(page.locator("#envGrid")).to_be_visible()
+
+
+class TestResetButton:
+    """Tests that verify the Reset button correctly re-enables UI controls."""
+
+    def test_reset_re_enables_build_button(self, page: Page, server_url: str):
+        """After resetBuild() the build button must be enabled when an env is selected."""
+        page.goto(server_url)
+
+        # Wait for variants and select one
+        page.wait_for_function(
+            "document.querySelector('#variantSelect').options.length > 1",
+            timeout=5000,
+        )
+        page.select_option("#variantSelect", index=1)
+        page.wait_for_selector("#envGrid", state="visible", timeout=3000)
+        # Select the first firmware-type env button
+        page.locator(".env-btn").first.click()
+
+        # Simulate a completed build by calling setBuilding(true) then resetBuild()
+        page.evaluate("() => { setBuilding(true); }")
+        expect(page.locator("#buildBtn")).to_be_disabled()
+
+        page.evaluate("() => { resetBuild(); }")
+        # After reset, build button must be enabled again (env is still selected)
+        expect(page.locator("#buildBtn")).to_be_enabled()
+
+    def test_reset_re_enables_branch_select(self, page: Page, server_url: str):
+        """branchSelect must not be disabled after resetBuild()."""
+        page.goto(server_url)
+
+        # Simulate a build in progress then reset
+        page.evaluate("() => { setBuilding(true); }")
+        expect(page.locator("#branchSelect")).to_be_disabled()
+
+        page.evaluate("() => { resetBuild(); }")
+        expect(page.locator("#branchSelect")).to_be_enabled()
+
+    def test_reset_re_enables_variant_select(self, page: Page, server_url: str):
+        """variantSelect must not be disabled after resetBuild()."""
+        page.goto(server_url)
+
+        page.evaluate("() => { setBuilding(true); }")
+        expect(page.locator("#variantSelect")).to_be_disabled()
+
+        page.evaluate("() => { resetBuild(); }")
+        expect(page.locator("#variantSelect")).to_be_enabled()
+
+    def test_set_building_true_disables_selects(self, page: Page, server_url: str):
+        """Calling setBuilding(true) must disable branchSelect and variantSelect."""
+        page.goto(server_url)
+        page.evaluate("() => { setBuilding(true); }")
+        expect(page.locator("#branchSelect")).to_be_disabled()
+        expect(page.locator("#variantSelect")).to_be_disabled()
+
+    def test_reset_hides_reset_button(self, page: Page, server_url: str):
+        """resetBuild() must hide the reset button itself."""
+        page.goto(server_url)
+        # Make it visible first
+        page.evaluate("() => { document.getElementById('resetBtn').classList.add('visible'); }")
+        expect(page.locator("#resetBtn")).to_be_visible()
+        page.evaluate("() => { resetBuild(); }")
+        expect(page.locator("#resetBtn")).not_to_be_visible()
+

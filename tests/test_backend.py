@@ -405,3 +405,178 @@ class TestFixPioPackages:
         (pkgs_dir / "some_file.txt").write_text("hello")
         result = _fix_pio_packages()
         assert result == []
+
+
+# ── Build cache ───────────────────────────────────────────────────────────────
+
+class TestBuildCache:
+    """Unit tests for the firmware build result cache."""
+
+    def _prime_cache(self, tmp_path, env_id, branch, flags, arch=ARCH_ESP32):
+        """Create a cache entry for the given parameters and return the cache key."""
+        from app import _build_cache_key, BUILD_CACHE, BUILD_CACHE_LOCK
+
+        key = _build_cache_key(env_id, branch, flags)
+        cache_dir = tmp_path / "cache" / key
+        cache_dir.mkdir(parents=True)
+
+        ext = ".hex" if arch == ARCH_NRF52 else ".bin"
+        bin_file = cache_dir / f"firmware{ext}"
+        bin_file.write_bytes(b"\xca\xfe\xba\xbe" * 4)
+
+        entry = {
+            "bin_path": str(bin_file),
+            "zip_path": None,
+            "arch": arch,
+            "env_id": env_id,
+        }
+        with BUILD_CACHE_LOCK:
+            BUILD_CACHE[key] = entry
+        return key
+
+    def teardown_method(self):
+        """Remove any cache entries and associated files added by tests."""
+        import shutil as _shutil
+        import app as app_module
+        with app_module.BUILD_CACHE_LOCK:
+            for entry in app_module.BUILD_CACHE.values():
+                try:
+                    from pathlib import Path as _Path
+                    bin_parent = _Path(entry["bin_path"]).parent
+                    if bin_parent.is_dir():
+                        _shutil.rmtree(str(bin_parent), ignore_errors=True)
+                except Exception:
+                    pass
+            app_module.BUILD_CACHE.clear()
+
+    def test_cache_key_is_deterministic(self):
+        from app import _build_cache_key
+        flags = {"ADVERT_NAME": "mynode", "BLE_PIN": "123456"}
+        k1 = _build_cache_key("heltec_v3_repeater", "main", flags)
+        k2 = _build_cache_key("heltec_v3_repeater", "main", flags)
+        assert k1 == k2
+
+    def test_cache_key_differs_for_different_flags(self):
+        from app import _build_cache_key
+        k1 = _build_cache_key("heltec_v3_repeater", "main", {"ADVERT_NAME": "a"})
+        k2 = _build_cache_key("heltec_v3_repeater", "main", {"ADVERT_NAME": "b"})
+        assert k1 != k2
+
+    def test_cache_key_differs_for_different_env(self):
+        from app import _build_cache_key
+        k1 = _build_cache_key("heltec_v3_repeater", "main", {})
+        k2 = _build_cache_key("rak4631_repeater", "main", {})
+        assert k1 != k2
+
+    def test_cache_key_differs_for_different_branch(self):
+        from app import _build_cache_key
+        k1 = _build_cache_key("heltec_v3_repeater", "main", {})
+        k2 = _build_cache_key("heltec_v3_repeater", "develop", {})
+        assert k1 != k2
+
+    def test_cache_hit_returns_done_job_immediately(self, client, tmp_path, monkeypatch):
+        """When the cache has a valid entry, /api/build should return a done job."""
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {})
+
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "job_id" in data
+        job_id = data["job_id"]
+
+        # The job must already be done — no build thread was started
+        with app_module.builds_lock:
+            job = app_module.builds.get(job_id)
+        assert job is not None
+        assert job["status"] == "done"
+
+    def test_cache_hit_job_has_correct_bin_path(self, client, tmp_path, monkeypatch):
+        """Cached job bin_path must point to the cached file."""
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {})
+
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        job_id = resp.get_json()["job_id"]
+        with app_module.builds_lock:
+            job = app_module.builds[job_id]
+        from pathlib import Path
+        assert Path(job["bin_path"]).exists()
+
+    def test_cache_miss_starts_build_thread(self, client, monkeypatch):
+        """When cache has no entry, /api/build should start a real build thread."""
+        # Ensure no cache entry exists for this combination
+        from app import BUILD_CACHE, BUILD_CACHE_LOCK
+        with BUILD_CACHE_LOCK:
+            BUILD_CACHE.clear()
+
+        thread_started = []
+        monkeypatch.setattr(
+            app_module.threading.Thread, "start",
+            lambda self: thread_started.append(True),
+        )
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        assert thread_started, "Build thread was not started on cache miss"
+
+    def test_cache_miss_for_different_flags(self, client, tmp_path, monkeypatch):
+        """A cache entry for flags={} must not serve a request with different flags."""
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {})
+
+        thread_started = []
+        monkeypatch.setattr(
+            app_module.threading.Thread, "start",
+            lambda self: thread_started.append(True),
+        )
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({
+                "env": "heltec_v3_repeater",
+                "branch": "main",
+                "flags": {"ADVERT_NAME": "different"},
+            }),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        assert thread_started, "Build thread should start when flags differ from cached entry"
+
+    def test_status_endpoint_for_cached_job(self, client, tmp_path, monkeypatch):
+        """The /api/status endpoint must report 'done' for a cache-hit job."""
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {})
+
+        build_resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        job_id = build_resp.get_json()["job_id"]
+
+        status_resp = client.get(f"/api/status/{job_id}")
+        assert status_resp.status_code == 200
+        data = status_resp.get_json()
+        assert data["status"] == "done"
+
+
+# ── Room-server existence check removed ────────────────────────────────────────
+
+class TestRoomServerCheckRemoved:
+    """Verify that run_build no longer adds a room-server folder check to debug_files."""
+
+    def test_debug_files_do_not_contain_room_server_key(self, client, done_esp32_job):
+        """The debug_files dict must not include the removed room-server existence entry."""
+        resp = client.get(f"/api/debug/{done_esp32_job}")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        files = data.get("files", {})
+        assert "examples/simple_repeater_room_server" not in files
+
