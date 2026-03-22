@@ -70,10 +70,37 @@ BUILD_CACHE: dict[str, dict] = {}   # cache_key → {bin_path, zip_path, arch, e
 BUILD_CACHE_LOCK = threading.Lock()
 
 
-def _build_cache_key(env_id: str, branch: str, flags: dict) -> str:
-    """Return a stable hex digest identifying a (env, branch, flags) combination."""
-    canonical = json.dumps({"env": env_id, "branch": branch, "flags": flags}, sort_keys=True)
+def _build_cache_key(env_id: str, branch: str, flags: dict, commit: str = "") -> str:
+    """Return a stable hex digest identifying a (env, branch, flags, commit) combination."""
+    canonical = json.dumps(
+        {"env": env_id, "branch": branch, "flags": flags, "commit": commit},
+        sort_keys=True,
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _get_branch_head_commit(branch: str) -> str:
+    """Return the HEAD commit hash for *branch* on the remote repo via git ls-remote.
+
+    Returns an empty string when the remote is unreachable or the ref is not
+    found, so callers fall back to a cache miss gracefully.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", MESHCORE_REPO_URL, f"refs/heads/{branch}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            commit = result.stdout.strip().splitlines()[0].split("\t")[0].strip()
+            if len(commit) in (40, 64):  # SHA-1 or SHA-256 hash length
+                return commit
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return ""
 
 # ── Variant / environment discovery ─────────────────────────────────────────
 # Firmware types we expose, matched against env names in each variant ini.
@@ -689,6 +716,21 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
 
         repo_dir = job_dir / "repo"
 
+        # Capture the exact commit that was checked out for use in the cache key.
+        try:
+            _cp = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo_dir),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            repo_commit = _cp.stdout.strip() if _cp.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            repo_commit = ""
+        log(f"[builder] Checked out commit: {repo_commit or '(unknown)'}")
+
         # 1a. Copy any bundled extra examples into the cloned repo
         if EXTRA_EXAMPLES_DIR.exists():
             for extra in EXTRA_EXAMPLES_DIR.iterdir():
@@ -826,7 +868,7 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         log(f"[builder] ✓ Build complete! {bin_path.name}")
 
         # ── Cache the result so identical requests are served instantly ───────
-        cache_key = _build_cache_key(env_id, branch, custom_flags)
+        cache_key = _build_cache_key(env_id, branch, custom_flags, repo_commit)
         cache_entry_dir = BUILD_CACHE_DIR / cache_key
         try:
             cache_entry_dir.mkdir(exist_ok=True)
@@ -936,7 +978,8 @@ def api_build():
     custom_flags = data.get("flags", {})
 
     # ── Cache check ──────────────────────────────────────────────────────────
-    cache_key = _build_cache_key(env_id, branch, custom_flags)
+    commit = _get_branch_head_commit(branch)
+    cache_key = _build_cache_key(env_id, branch, custom_flags, commit)
     with BUILD_CACHE_LOCK:
         cached = BUILD_CACHE.get(cache_key)
     if cached and Path(cached["bin_path"]).exists():

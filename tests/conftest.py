@@ -102,6 +102,9 @@ def client(tmp_path, monkeypatch):
     # Mark variant loading as complete
     app_module.VARIANT_READY.set()
 
+    # Prevent network calls for branch HEAD commit resolution during tests
+    monkeypatch.setattr(app_module, "_get_branch_head_commit", lambda branch: "")
+
     with flask_app.test_client() as c:
         yield c
 

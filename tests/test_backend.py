@@ -412,11 +412,11 @@ class TestFixPioPackages:
 class TestBuildCache:
     """Unit tests for the firmware build result cache."""
 
-    def _prime_cache(self, tmp_path, env_id, branch, flags, arch=ARCH_ESP32):
+    def _prime_cache(self, tmp_path, env_id, branch, flags, arch=ARCH_ESP32, commit=""):
         """Create a cache entry for the given parameters and return the cache key."""
         from app import _build_cache_key, BUILD_CACHE, BUILD_CACHE_LOCK
 
-        key = _build_cache_key(env_id, branch, flags)
+        key = _build_cache_key(env_id, branch, flags, commit)
         cache_dir = tmp_path / "cache" / key
         cache_dir.mkdir(parents=True)
 
@@ -452,8 +452,9 @@ class TestBuildCache:
     def test_cache_key_is_deterministic(self):
         from app import _build_cache_key
         flags = {"ADVERT_NAME": "mynode", "BLE_PIN": "123456"}
-        k1 = _build_cache_key("heltec_v3_repeater", "main", flags)
-        k2 = _build_cache_key("heltec_v3_repeater", "main", flags)
+        commit = "a" * 40
+        k1 = _build_cache_key("heltec_v3_repeater", "main", flags, commit)
+        k2 = _build_cache_key("heltec_v3_repeater", "main", flags, commit)
         assert k1 == k2
 
     def test_cache_key_differs_for_different_flags(self):
@@ -473,6 +474,115 @@ class TestBuildCache:
         k1 = _build_cache_key("heltec_v3_repeater", "main", {})
         k2 = _build_cache_key("heltec_v3_repeater", "develop", {})
         assert k1 != k2
+
+    def test_cache_key_differs_for_different_commit(self):
+        from app import _build_cache_key
+        k1 = _build_cache_key("heltec_v3_repeater", "main", {}, "a" * 40)
+        k2 = _build_cache_key("heltec_v3_repeater", "main", {}, "b" * 40)
+        assert k1 != k2
+
+    def test_cache_key_with_commit_differs_from_without(self):
+        from app import _build_cache_key
+        k1 = _build_cache_key("heltec_v3_repeater", "main", {}, "")
+        k2 = _build_cache_key("heltec_v3_repeater", "main", {}, "a" * 40)
+        assert k1 != k2
+
+    def test_cache_key_all_dimensions_independent(self):
+        """Each cache key dimension independently changes the key."""
+        from app import _build_cache_key
+        base = _build_cache_key("heltec_v3_repeater", "main", {}, "")
+        different_env    = _build_cache_key("rak4631_repeater",    "main",    {},                      "")
+        different_branch = _build_cache_key("heltec_v3_repeater", "develop", {},                      "")
+        different_flags  = _build_cache_key("heltec_v3_repeater", "main",    {"ADVERT_NAME": "x"},    "")
+        different_commit = _build_cache_key("heltec_v3_repeater", "main",    {},                      "a" * 40)
+        assert len({base, different_env, different_branch, different_flags, different_commit}) == 5
+
+    def test_cache_miss_for_different_commit(self, client, tmp_path, monkeypatch):
+        """A cache entry for commit_A must not serve a request resolved to commit_B."""
+        commit_a = "a" * 40
+        commit_b = "b" * 40
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {}, commit=commit_a)
+
+        # Override the mock set in the client fixture to return a different commit.
+        monkeypatch.setattr(app_module, "_get_branch_head_commit", lambda branch: commit_b)
+
+        thread_started = []
+        monkeypatch.setattr(
+            app_module.threading.Thread, "start",
+            lambda self: thread_started.append(True),
+        )
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        assert thread_started, "Build thread should start when commit differs from cached entry"
+
+    def test_cache_hit_with_matching_commit(self, client, tmp_path, monkeypatch):
+        """Cache entry for a specific commit must be served when the same commit is current."""
+        commit = "a" * 40
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {}, commit=commit)
+
+        monkeypatch.setattr(app_module, "_get_branch_head_commit", lambda branch: commit)
+
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        job_id = resp.get_json()["job_id"]
+        with app_module.builds_lock:
+            job = app_module.builds.get(job_id)
+        assert job is not None
+        assert job["status"] == "done"
+
+    def test_cache_hit_with_commit_and_flags(self, client, tmp_path, monkeypatch):
+        """Cache hit requires all four dimensions (env, branch, flags, commit) to match."""
+        commit = "c" * 40
+        flags = {"ADVERT_NAME": "meshnode", "WIFI_SSID": "myhome"}
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", flags, commit=commit)
+
+        monkeypatch.setattr(app_module, "_get_branch_head_commit", lambda branch: commit)
+
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({
+                "env": "heltec_v3_repeater",
+                "branch": "main",
+                "flags": flags,
+            }),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        job_id = resp.get_json()["job_id"]
+        with app_module.builds_lock:
+            job = app_module.builds.get(job_id)
+        assert job is not None
+        assert job["status"] == "done"
+
+    def test_cache_miss_when_ls_remote_fails(self, client, tmp_path, monkeypatch):
+        """When _get_branch_head_commit returns '' (network failure), entries stored
+        with a real commit hash must not be served."""
+        commit = "d" * 40
+        self._prime_cache(tmp_path, "heltec_v3_repeater", "main", {}, commit=commit)
+
+        # ls-remote fails → returns ""
+        monkeypatch.setattr(app_module, "_get_branch_head_commit", lambda branch: "")
+
+        thread_started = []
+        monkeypatch.setattr(
+            app_module.threading.Thread, "start",
+            lambda self: thread_started.append(True),
+        )
+        resp = client.post(
+            "/api/build",
+            data=json.dumps({"env": "heltec_v3_repeater", "branch": "main", "flags": {}}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        assert thread_started, "Build should start when ls-remote returns no commit"
 
     def test_cache_hit_returns_done_job_immediately(self, client, tmp_path, monkeypatch):
         """When the cache has a valid entry, /api/build should return a done job."""
