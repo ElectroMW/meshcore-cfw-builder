@@ -62,12 +62,41 @@ builds: dict[str, dict] = {}
 builds_lock = threading.Lock()
 
 # ── Build result cache ───────────────────────────────────────────────────────
-# Successful builds are cached so identical requests (same env, branch, flags)
-# are served instantly without re-running PlatformIO.
+# Successful builds that used no custom flags are cached so identical requests
+# (same variant, firmware type, branch, and HEAD commit) are served instantly
+# without re-running PlatformIO.  Builds with any custom flags are never
+# written to the cache.
 BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "meshcore_build_cache"
 BUILD_CACHE_DIR.mkdir(exist_ok=True)
 BUILD_CACHE: dict[str, dict] = {}   # cache_key → {bin_path, zip_path, arch, env_id}
 BUILD_CACHE_LOCK = threading.Lock()
+
+
+def _clear_startup_caches() -> None:
+    """Clear the firmware build cache and PlatformIO's cache directories on startup.
+
+    Only cache directories are removed — PlatformIO packages and tools are
+    left intact so they do not need to be re-downloaded on every restart.
+    """
+    # 1. Wipe our own firmware binary cache so stale entries don't survive restarts.
+    for entry_dir in BUILD_CACHE_DIR.iterdir():
+        try:
+            if entry_dir.is_dir():
+                shutil.rmtree(str(entry_dir))
+        except (OSError, IOError):
+            pass
+
+    # 2. Clear PlatformIO's registry / board-definition cache.
+    pio_cache = Path.home() / ".platformio" / ".cache"
+    if pio_cache.exists():
+        try:
+            shutil.rmtree(str(pio_cache))
+            pio_cache.mkdir(exist_ok=True)
+        except (OSError, IOError):
+            pass
+
+
+_clear_startup_caches()
 
 
 def _build_cache_key(variant: str, firmware_type: str, branch: str, commit: str = "") -> str:
@@ -875,25 +904,30 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         log(f"[builder] ✓ Build complete! {bin_path.name}")
 
         # ── Cache the result so identical requests are served instantly ───────
-        cache_key = _build_cache_key(env_id, branch, custom_flags, repo_commit)
-        cache_entry_dir = BUILD_CACHE_DIR / cache_key
-        try:
-            cache_entry_dir.mkdir(exist_ok=True)
-            cached_bin = cache_entry_dir / bin_path.name
-            shutil.copy2(str(bin_path), str(cached_bin))
-            cached_zip = None
-            if zip_path is not None:
-                cached_zip = cache_entry_dir / zip_path.name
-                shutil.copy2(str(zip_path), str(cached_zip))
-            with BUILD_CACHE_LOCK:
-                BUILD_CACHE[cache_key] = {
-                    "bin_path": str(cached_bin),
-                    "zip_path": str(cached_zip) if cached_zip else None,
-                    "arch":     arch,
-                    "env_id":   env_id,
-                }
-        except (OSError, IOError) as cache_exc:
-            log(f"[builder] Warning: could not cache build result: {cache_exc}")
+        # Builds with custom flags are never cached — they are personalised and
+        # must not be served to other users.
+        if custom_flags:
+            log("[builder] Custom flags used — build result will not be cached.")
+        else:
+            cache_key = _build_cache_key(variant_folder, env_type, branch, repo_commit)
+            cache_entry_dir = BUILD_CACHE_DIR / cache_key
+            try:
+                cache_entry_dir.mkdir(exist_ok=True)
+                cached_bin = cache_entry_dir / bin_path.name
+                shutil.copy2(str(bin_path), str(cached_bin))
+                cached_zip = None
+                if zip_path is not None:
+                    cached_zip = cache_entry_dir / zip_path.name
+                    shutil.copy2(str(zip_path), str(cached_zip))
+                with BUILD_CACHE_LOCK:
+                    BUILD_CACHE[cache_key] = {
+                        "bin_path": str(cached_bin),
+                        "zip_path": str(cached_zip) if cached_zip else None,
+                        "arch":     arch,
+                        "env_id":   env_id,
+                    }
+            except (OSError, IOError) as cache_exc:
+                log(f"[builder] Warning: could not cache build result: {cache_exc}")
 
     except Exception as exc:
         if not is_cancelled():
@@ -985,30 +1019,32 @@ def api_build():
     custom_flags = data.get("flags", {})
 
     # ── Cache check ──────────────────────────────────────────────────────────
-    commit = _get_branch_head_commit(branch)
-    cache_key = _build_cache_key(env_id, branch, custom_flags, commit)
-    with BUILD_CACHE_LOCK:
-        cached = BUILD_CACHE.get(cache_key)
-    if cached and Path(cached["bin_path"]).exists():
-        job_id = str(uuid.uuid4())
-        q: queue.Queue = queue.Queue()
-        q.put(f"[cache] Returning cached firmware for {env_id}.")
-        q.put(None)  # sentinel — tells the SSE stream this is done
-        with builds_lock:
-            builds[job_id] = {
-                "status": "done",
-                "log_queue": q,
-                "bin_path": cached["bin_path"],
-                "zip_path": cached.get("zip_path"),
-                "error": None,
-                "env_id": env_id,
-                "variant_folder": variant_folder,
-                "arch": cached["arch"],
-                "cancelled": False,
-                "current_proc": None,
-                "debug_files": {},
-            }
-        return jsonify({"job_id": job_id})
+    # Builds that use custom flags are never served from cache.
+    if not custom_flags:
+        commit = _get_branch_head_commit(branch)
+        cache_key = _build_cache_key(variant_folder, env_type, branch, commit)
+        with BUILD_CACHE_LOCK:
+            cached = BUILD_CACHE.get(cache_key)
+        if cached and Path(cached["bin_path"]).exists():
+            job_id = str(uuid.uuid4())
+            q: queue.Queue = queue.Queue()
+            q.put(f"[cache] Returning cached firmware for {env_id}.")
+            q.put(None)  # sentinel — tells the SSE stream this is done
+            with builds_lock:
+                builds[job_id] = {
+                    "status": "done",
+                    "log_queue": q,
+                    "bin_path": cached["bin_path"],
+                    "zip_path": cached.get("zip_path"),
+                    "error": None,
+                    "env_id": env_id,
+                    "variant_folder": variant_folder,
+                    "arch": cached["arch"],
+                    "cancelled": False,
+                    "current_proc": None,
+                    "debug_files": {},
+                }
+            return jsonify({"job_id": job_id})
 
     job_id = str(uuid.uuid4())
 
