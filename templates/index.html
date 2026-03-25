@@ -1159,6 +1159,22 @@
     clearLog();
     appendLog(`Starting build: ${currentEnv}`, 'log-info');
 
+    // If "Custom flags" is checked but every visible flag is still at its
+    // default value, treat it as no customisation and uncheck the box so the
+    // server can serve the result from its build cache.
+    if (useCustomFlags) {
+      const anyModified = FLAGS.filter(flagApplies).some(f => {
+        const el = document.getElementById(`flag_${f.key}`);
+        return el && el.value !== f.default;
+      });
+      if (!anyModified) {
+        useCustomFlags = false;
+        const chk = document.getElementById('customFlagsChk');
+        if (chk) chk.checked = false;
+        applyFlagsEnabledState();
+      }
+    }
+
     const body = { env: currentEnv, branch: currentBranch, flags: collectFlags() };
 
     let jobId;

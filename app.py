@@ -62,18 +62,81 @@ builds: dict[str, dict] = {}
 builds_lock = threading.Lock()
 
 # ── Build result cache ───────────────────────────────────────────────────────
-# Successful builds are cached so identical requests (same env, branch, flags)
-# are served instantly without re-running PlatformIO.
+# Successful builds that used no custom flags are cached so identical requests
+# (same variant, firmware type, branch, and HEAD commit) are served instantly
+# without re-running PlatformIO.  Builds with any custom flags are never
+# written to the cache.
 BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "meshcore_build_cache"
 BUILD_CACHE_DIR.mkdir(exist_ok=True)
 BUILD_CACHE: dict[str, dict] = {}   # cache_key → {bin_path, zip_path, arch, env_id}
 BUILD_CACHE_LOCK = threading.Lock()
 
 
-def _build_cache_key(env_id: str, branch: str, flags: dict) -> str:
-    """Return a stable hex digest identifying a (env, branch, flags) combination."""
-    canonical = json.dumps({"env": env_id, "branch": branch, "flags": flags}, sort_keys=True)
+def _clear_startup_caches() -> None:
+    """Clear the firmware build cache and PlatformIO's cache directories on startup.
+
+    Only cache directories are removed — PlatformIO packages and tools are
+    left intact so they do not need to be re-downloaded on every restart.
+    """
+    # 1. Wipe our own firmware binary cache so stale entries don't survive restarts.
+    for entry_dir in BUILD_CACHE_DIR.iterdir():
+        try:
+            if entry_dir.is_dir():
+                shutil.rmtree(str(entry_dir))
+        except (OSError, IOError):
+            pass
+
+    # 2. Clear PlatformIO's registry / board-definition cache.
+    pio_cache = Path.home() / ".platformio" / ".cache"
+    if pio_cache.exists():
+        try:
+            shutil.rmtree(str(pio_cache))
+            pio_cache.mkdir(exist_ok=True)
+        except (OSError, IOError):
+            pass
+
+
+_clear_startup_caches()
+
+
+def _build_cache_key(variant: str, firmware_type: str, branch: str, commit: str = "") -> str:
+    """Return a stable hex digest for a (variant, firmware_type, branch, commit) combination.
+
+    Builds that use custom flags are never cached, so flags are not included
+    in the key.  The commit hash is resolved via ``_get_branch_head_commit``
+    (git ls-remote — no checkout required).
+    """
+    canonical = json.dumps(
+        {"variant": variant, "firmware_type": firmware_type, "branch": branch, "commit": commit},
+        sort_keys=True,
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _get_branch_head_commit(branch: str) -> str:
+    """Return the HEAD commit hash for *branch* via ``git ls-remote`` — no checkout performed.
+
+    Querying the remote ref is a lightweight read-only operation; the repo is
+    never cloned or modified.  Returns an empty string when the remote is
+    unreachable or the ref is not found so callers treat the result as a cache
+    miss gracefully.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", MESHCORE_REPO_URL, f"refs/heads/{branch}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            commit = result.stdout.strip().splitlines()[0].split("\t")[0].strip()
+            if len(commit) in (40, 64):  # SHA-1 or SHA-256 hash length
+                return commit
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return ""
 
 # ── Variant / environment discovery ─────────────────────────────────────────
 # Firmware types we expose, matched against env names in each variant ini.
@@ -689,6 +752,21 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
 
         repo_dir = job_dir / "repo"
 
+        # Capture the exact commit that was checked out for use in the cache key.
+        try:
+            _cp = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo_dir),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            repo_commit = _cp.stdout.strip() if _cp.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            repo_commit = ""
+        log(f"[builder] Checked out commit: {repo_commit or '(unknown)'}")
+
         # 1a. Copy any bundled extra examples into the cloned repo
         if EXTRA_EXAMPLES_DIR.exists():
             for extra in EXTRA_EXAMPLES_DIR.iterdir():
@@ -826,25 +904,30 @@ def run_build(job_id: str, env_id: str, variant_folder: str, env_type: str, cust
         log(f"[builder] ✓ Build complete! {bin_path.name}")
 
         # ── Cache the result so identical requests are served instantly ───────
-        cache_key = _build_cache_key(env_id, branch, custom_flags)
-        cache_entry_dir = BUILD_CACHE_DIR / cache_key
-        try:
-            cache_entry_dir.mkdir(exist_ok=True)
-            cached_bin = cache_entry_dir / bin_path.name
-            shutil.copy2(str(bin_path), str(cached_bin))
-            cached_zip = None
-            if zip_path is not None:
-                cached_zip = cache_entry_dir / zip_path.name
-                shutil.copy2(str(zip_path), str(cached_zip))
-            with BUILD_CACHE_LOCK:
-                BUILD_CACHE[cache_key] = {
-                    "bin_path": str(cached_bin),
-                    "zip_path": str(cached_zip) if cached_zip else None,
-                    "arch":     arch,
-                    "env_id":   env_id,
-                }
-        except (OSError, IOError) as cache_exc:
-            log(f"[builder] Warning: could not cache build result: {cache_exc}")
+        # Builds with custom flags are never cached — they are personalised and
+        # must not be served to other users.
+        if custom_flags:
+            log("[builder] Custom flags used — build result will not be cached.")
+        else:
+            cache_key = _build_cache_key(variant_folder, env_type, branch, repo_commit)
+            cache_entry_dir = BUILD_CACHE_DIR / cache_key
+            try:
+                cache_entry_dir.mkdir(exist_ok=True)
+                cached_bin = cache_entry_dir / bin_path.name
+                shutil.copy2(str(bin_path), str(cached_bin))
+                cached_zip = None
+                if zip_path is not None:
+                    cached_zip = cache_entry_dir / zip_path.name
+                    shutil.copy2(str(zip_path), str(cached_zip))
+                with BUILD_CACHE_LOCK:
+                    BUILD_CACHE[cache_key] = {
+                        "bin_path": str(cached_bin),
+                        "zip_path": str(cached_zip) if cached_zip else None,
+                        "arch":     arch,
+                        "env_id":   env_id,
+                    }
+            except (OSError, IOError) as cache_exc:
+                log(f"[builder] Warning: could not cache build result: {cache_exc}")
 
     except Exception as exc:
         if not is_cancelled():
@@ -936,29 +1019,32 @@ def api_build():
     custom_flags = data.get("flags", {})
 
     # ── Cache check ──────────────────────────────────────────────────────────
-    cache_key = _build_cache_key(env_id, branch, custom_flags)
-    with BUILD_CACHE_LOCK:
-        cached = BUILD_CACHE.get(cache_key)
-    if cached and Path(cached["bin_path"]).exists():
-        job_id = str(uuid.uuid4())
-        q: queue.Queue = queue.Queue()
-        q.put(f"[cache] Returning cached firmware for {env_id}.")
-        q.put(None)  # sentinel — tells the SSE stream this is done
-        with builds_lock:
-            builds[job_id] = {
-                "status": "done",
-                "log_queue": q,
-                "bin_path": cached["bin_path"],
-                "zip_path": cached.get("zip_path"),
-                "error": None,
-                "env_id": env_id,
-                "variant_folder": variant_folder,
-                "arch": cached["arch"],
-                "cancelled": False,
-                "current_proc": None,
-                "debug_files": {},
-            }
-        return jsonify({"job_id": job_id})
+    # Builds that use custom flags are never served from cache.
+    if not custom_flags:
+        commit = _get_branch_head_commit(branch)
+        cache_key = _build_cache_key(variant_folder, env_type, branch, commit)
+        with BUILD_CACHE_LOCK:
+            cached = BUILD_CACHE.get(cache_key)
+        if cached and Path(cached["bin_path"]).exists():
+            job_id = str(uuid.uuid4())
+            q: queue.Queue = queue.Queue()
+            q.put(f"[cache] Returning cached firmware for {env_id}.")
+            q.put(None)  # sentinel — tells the SSE stream this is done
+            with builds_lock:
+                builds[job_id] = {
+                    "status": "done",
+                    "log_queue": q,
+                    "bin_path": cached["bin_path"],
+                    "zip_path": cached.get("zip_path"),
+                    "error": None,
+                    "env_id": env_id,
+                    "variant_folder": variant_folder,
+                    "arch": cached["arch"],
+                    "cancelled": False,
+                    "current_proc": None,
+                    "debug_files": {},
+                }
+            return jsonify({"job_id": job_id})
 
     job_id = str(uuid.uuid4())
 

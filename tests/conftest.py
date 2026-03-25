@@ -74,24 +74,27 @@ def client(tmp_path, monkeypatch):
         app_module,
         "BRANCH_ENV_TO_VARIANT",
         {"main": {
-            "heltec_v3_repeater": "heltec_v3",
-            "rak4631_repeater": "rak4631",
+            "heltec_v3_repeater":   "heltec_v3",
+            "heltec_v3_room_server": "heltec_v3",
+            "rak4631_repeater":     "rak4631",
         }},
     )
     monkeypatch.setattr(
         app_module,
         "BRANCH_ENV_TYPE_MAP",
         {"main": {
-            "heltec_v3_repeater": "repeater",
-            "rak4631_repeater": "repeater",
+            "heltec_v3_repeater":   "repeater",
+            "heltec_v3_room_server": "room_server",
+            "rak4631_repeater":     "repeater",
         }},
     )
     monkeypatch.setattr(
         app_module,
         "BRANCH_ENV_ARCH_MAP",
         {"main": {
-            "heltec_v3_repeater": ARCH_ESP32,
-            "rak4631_repeater": ARCH_NRF52,
+            "heltec_v3_repeater":   ARCH_ESP32,
+            "heltec_v3_room_server": ARCH_ESP32,
+            "rak4631_repeater":     ARCH_NRF52,
         }},
     )
     monkeypatch.setattr(
@@ -101,6 +104,9 @@ def client(tmp_path, monkeypatch):
     )
     # Mark variant loading as complete
     app_module.VARIANT_READY.set()
+
+    # Prevent network calls for branch HEAD commit resolution during tests
+    monkeypatch.setattr(app_module, "_get_branch_head_commit", lambda branch: "")
 
     with flask_app.test_client() as c:
         yield c
