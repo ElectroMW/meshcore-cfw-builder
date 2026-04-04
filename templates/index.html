@@ -104,30 +104,9 @@
     select:focus, input:focus { border-color: var(--accent); }
     select { cursor: pointer; }
 
-    /* env selector grid */
-    .env-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.5rem;
-      margin-bottom: 1.2rem;
-    }
-    .env-btn {
-      background: var(--surface2);
-      border: 1.5px solid var(--border);
-      border-radius: 8px;
-      color: var(--text-muted);
-      padding: 0.65rem 0.5rem;
-      font-size: 0.78rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-      text-align: center;
-    }
-    .env-btn:hover { border-color: var(--accent); color: var(--text); }
-    .env-btn.selected {
-      border-color: var(--accent);
-      background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
-      color: var(--accent);
+    /* role / firmware-type dropdown field */
+    #envField {
+      margin-bottom: 1rem;
     }
 
     /* custom-flags toggle */
@@ -576,8 +555,10 @@
         </select>
       </div>
 
-      <div class="card-title" id="fwTypeTitle" style="display:none">2 · Select Firmware Type</div>
-      <div class="env-grid" id="envGrid" style="display:none"></div>
+      <div class="card-title" id="roleTitle" style="display:none">2 · Select Role</div>
+      <div class="field" id="envField" style="display:none">
+        <select id="envSelect" onchange="onEnvChange(this.value)"></select>
+      </div>
 
       <div class="card-title" id="flagsTitle" style="display:none">3 · Customise Build Flags</div>
       <div class="flags-toggle-row" id="flagsToggleRow" style="display:none">
@@ -843,8 +824,9 @@
   }
 
   function onVariantChange(variantId) {
-    const envGrid   = document.getElementById('envGrid');
-    const fwTitle   = document.getElementById('fwTypeTitle');
+    const envField  = document.getElementById('envField');
+    const envSelect = document.getElementById('envSelect');
+    const fwTitle   = document.getElementById('roleTitle');
     const flagsTitle = document.getElementById('flagsTitle');
     const flagsToggleRow = document.getElementById('flagsToggleRow');
     const flagsCont = document.getElementById('flagsContainer');
@@ -853,9 +835,9 @@
     currentEnv     = null;
     currentEnvType = '';
     currentArch    = '';
-    envGrid.innerHTML = '';
+    envSelect.innerHTML = '';
     flagsCont.innerHTML = '';
-    envGrid.style.display = 'none';
+    envField.style.display = 'none';
     fwTitle.style.display = 'none';
     flagsTitle.style.display = 'none';
     flagsToggleRow.style.display = 'none';
@@ -867,34 +849,34 @@
     if (!variant || !variant.envs.length) return;
     currentArch = variant.arch || '';
 
-    // Populate firmware-type buttons
-    envGrid.innerHTML = '';
-    variant.envs.forEach((e, i) => {
-      const btn = document.createElement('button');
-      btn.className = 'env-btn' + (i === 0 ? ' selected' : '');
-      btn.dataset.env  = e.id;
-      btn.dataset.type = e.type;
-      btn.textContent  = e.label;
-      btn.onclick = () => selectEnv(btn);
-      envGrid.appendChild(btn);
+    // Populate role dropdown
+    variant.envs.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.dataset.type = e.type;
+      opt.textContent = e.label;
+      envSelect.appendChild(opt);
     });
 
-    envGrid.style.display   = 'grid';
-    fwTitle.style.display   = 'block';
+    fwTitle.style.display = 'block';
+    envField.style.display = 'block';
 
     // Auto-select env from URL param if present, otherwise first env
     const paramEnv = _getParam('env');
-    const targetBtn = (paramEnv && envGrid.querySelector(`[data-env="${CSS.escape(paramEnv)}"]`))
-      || envGrid.querySelector('.env-btn');
-    if (targetBtn) selectEnv(targetBtn);
+    if (paramEnv && variant.envs.find(e => e.id === paramEnv)) {
+      envSelect.value = paramEnv;
+    }
+    onEnvChange(envSelect.value);
   }
 
   // ── Env selection ─────────────────────────────────────────────────────────────
-  function selectEnv(btn) {
-    document.querySelectorAll('.env-btn').forEach(b => b.classList.remove('selected'));
-    btn.classList.add('selected');
-    currentEnv     = btn.dataset.env;
-    currentEnvType = btn.dataset.type || '';
+  function onEnvChange(envId) {
+    if (!envId) return;
+    const variantSel = document.getElementById('variantSelect');
+    const variant = allVariants.find(v => v.id === variantSel.value);
+    const envEntry = variant && variant.envs.find(e => e.id === envId);
+    currentEnv     = envId;
+    currentEnvType = envEntry ? (envEntry.type || '') : '';
     renderFlags();
     document.getElementById('flagsTitle').style.display = 'block';
     document.getElementById('flagsToggleRow').style.display = 'flex';
@@ -1067,6 +1049,7 @@
     document.getElementById('buildBtn').disabled = on || !currentEnv;
     document.getElementById('branchSelect').disabled = on;
     document.getElementById('variantSelect').disabled = on;
+    document.getElementById('envSelect').disabled = on;
     const spinner = document.getElementById('buildSpinner');
     const txt     = document.getElementById('buildBtnText');
     spinner.classList.toggle('active', on);

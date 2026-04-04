@@ -290,7 +290,7 @@ class TestBuildButtonBehaviour:
         options = page.locator("#variantSelect option")
         assert options.count() > 1
 
-    def test_selecting_variant_shows_env_grid(self, page: Page, server_url: str):
+    def test_selecting_variant_shows_env_select(self, page: Page, server_url: str):
         page.goto(server_url)
         page.wait_for_function(
             "document.querySelector('#variantSelect').options.length > 1",
@@ -298,9 +298,10 @@ class TestBuildButtonBehaviour:
         )
         # Select the first real variant
         page.select_option("#variantSelect", index=1)
-        # The env grid should now be visible
-        page.wait_for_selector("#envGrid", state="visible", timeout=3000)
-        expect(page.locator("#envGrid")).to_be_visible()
+        # The role dropdown field should now be visible
+        page.wait_for_selector("#envField", state="visible", timeout=3000)
+        expect(page.locator("#envField")).to_be_visible()
+        expect(page.locator("#envSelect")).to_be_visible()
 
 
 class TestResetButton:
@@ -316,9 +317,9 @@ class TestResetButton:
             timeout=5000,
         )
         page.select_option("#variantSelect", index=1)
-        page.wait_for_selector("#envGrid", state="visible", timeout=3000)
-        # Select the first firmware-type env button
-        page.locator(".env-btn").first.click()
+        page.wait_for_selector("#envField", state="visible", timeout=3000)
+        # The first role option is auto-selected; wait for the build button to be enabled
+        page.wait_for_function("!document.getElementById('buildBtn').disabled", timeout=3000)
 
         # Simulate a completed build by calling setBuilding(true) then resetBuild()
         page.evaluate("() => { setBuilding(true); }")
@@ -350,11 +351,12 @@ class TestResetButton:
         expect(page.locator("#variantSelect")).to_be_enabled()
 
     def test_set_building_true_disables_selects(self, page: Page, server_url: str):
-        """Calling setBuilding(true) must disable branchSelect and variantSelect."""
+        """Calling setBuilding(true) must disable branchSelect, variantSelect, and envSelect."""
         page.goto(server_url)
         page.evaluate("() => { setBuilding(true); }")
         expect(page.locator("#branchSelect")).to_be_disabled()
         expect(page.locator("#variantSelect")).to_be_disabled()
+        expect(page.locator("#envSelect")).to_be_disabled()
 
     def test_reset_hides_reset_button(self, page: Page, server_url: str):
         """resetBuild() must hide the reset button itself."""
