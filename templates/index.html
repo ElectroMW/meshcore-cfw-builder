@@ -555,7 +555,7 @@
         </select>
       </div>
 
-      <div class="card-title" id="fwTypeTitle" style="display:none">2 · Select Role</div>
+      <div class="card-title" id="roleTitle" style="display:none">2 · Select Role</div>
       <div class="field" id="envField" style="display:none">
         <select id="envSelect" onchange="onEnvChange(this.value)"></select>
       </div>
@@ -826,7 +826,7 @@
   function onVariantChange(variantId) {
     const envField  = document.getElementById('envField');
     const envSelect = document.getElementById('envSelect');
-    const fwTitle   = document.getElementById('fwTypeTitle');
+    const fwTitle   = document.getElementById('roleTitle');
     const flagsTitle = document.getElementById('flagsTitle');
     const flagsToggleRow = document.getElementById('flagsToggleRow');
     const flagsCont = document.getElementById('flagsContainer');
